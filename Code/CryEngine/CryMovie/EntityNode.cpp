@@ -128,7 +128,11 @@ CAnimEntityNode::CAnimEntityNode(const int id) : CAnimNode(id)
 	m_EntityIdTarget = 0;
 	m_EntityIdSource = 0;
 
-	m_baseAnimState.m_layerPlaysAnimation[0] = m_baseAnimState.m_layerPlaysAnimation[1] = m_baseAnimState.m_layerPlaysAnimation[2] = false;
+	//FIEND BEGIN: Originaly 0-2, Added up to 10
+	m_baseAnimState.m_layerPlaysAnimation[0] = m_baseAnimState.m_layerPlaysAnimation[1] = m_baseAnimState.m_layerPlaysAnimation[2] =
+	m_baseAnimState.m_layerPlaysAnimation[3] = m_baseAnimState.m_layerPlaysAnimation[4] = m_baseAnimState.m_layerPlaysAnimation[5] =
+	m_baseAnimState.m_layerPlaysAnimation[6] = m_baseAnimState.m_layerPlaysAnimation[7] = m_baseAnimState.m_layerPlaysAnimation[8] =
+	m_baseAnimState.m_layerPlaysAnimation[9] = m_baseAnimState.m_layerPlaysAnimation[10] = false;
 
 	m_baseAnimState.m_lastAnimationKeys[0][0] = -1;
 	m_baseAnimState.m_lastAnimationKeys[0][1] = -1;
@@ -136,9 +140,34 @@ CAnimEntityNode::CAnimEntityNode(const int id) : CAnimNode(id)
 	m_baseAnimState.m_lastAnimationKeys[1][1] = -1;
 	m_baseAnimState.m_lastAnimationKeys[2][0] = -1;
 	m_baseAnimState.m_lastAnimationKeys[2][1] = -1;
+	m_baseAnimState.m_lastAnimationKeys[3][0] = -1;
+	m_baseAnimState.m_lastAnimationKeys[3][1] = -1;
+	m_baseAnimState.m_lastAnimationKeys[4][0] = -1;
+	m_baseAnimState.m_lastAnimationKeys[4][1] = -1;
+	m_baseAnimState.m_lastAnimationKeys[5][0] = -1;
+	m_baseAnimState.m_lastAnimationKeys[5][1] = -1;
+	m_baseAnimState.m_lastAnimationKeys[6][0] = -1;
+	m_baseAnimState.m_lastAnimationKeys[6][1] = -1;
+	m_baseAnimState.m_lastAnimationKeys[7][0] = -1;
+	m_baseAnimState.m_lastAnimationKeys[7][1] = -1;
+	m_baseAnimState.m_lastAnimationKeys[8][0] = -1;
+	m_baseAnimState.m_lastAnimationKeys[8][1] = -1;
+	m_baseAnimState.m_lastAnimationKeys[9][0] = -1;
+	m_baseAnimState.m_lastAnimationKeys[9][1] = -1;
+	m_baseAnimState.m_lastAnimationKeys[10][0] = -1;
+	m_baseAnimState.m_lastAnimationKeys[10][1] = -1;
 
-	m_baseAnimState.m_bTimeJumped[0] = m_baseAnimState.m_bTimeJumped[1] = m_baseAnimState.m_bTimeJumped[2] = false;
-	m_baseAnimState.m_jumpTime[0] = m_baseAnimState.m_jumpTime[1] = m_baseAnimState.m_jumpTime[2] = 0.0f;
+	m_baseAnimState.m_bTimeJumped[0] = m_baseAnimState.m_bTimeJumped[1] = m_baseAnimState.m_bTimeJumped[2] = 
+	m_baseAnimState.m_bTimeJumped[3] = m_baseAnimState.m_bTimeJumped[4] = m_baseAnimState.m_bTimeJumped[5] = 
+	m_baseAnimState.m_bTimeJumped[6] = m_baseAnimState.m_bTimeJumped[7] = m_baseAnimState.m_bTimeJumped[8] = 
+	m_baseAnimState.m_bTimeJumped[9] = m_baseAnimState.m_bTimeJumped[10] = false;
+
+
+	m_baseAnimState.m_jumpTime[0] = m_baseAnimState.m_jumpTime[1] = m_baseAnimState.m_jumpTime[2] =
+	m_baseAnimState.m_jumpTime[3] = m_baseAnimState.m_jumpTime[4] = m_baseAnimState.m_jumpTime[5] = 
+	m_baseAnimState.m_jumpTime[6] = m_baseAnimState.m_jumpTime[7] = m_baseAnimState.m_jumpTime[8] = 
+	m_baseAnimState.m_jumpTime[9] = m_baseAnimState.m_jumpTime[10] = 0.0f;
+	//FIEND END
 
 #ifdef CHECK_FOR_TOO_MANY_ONPROPERTY_SCRIPT_CALLS
 	m_OnPropertyCalls = 0;
@@ -1714,12 +1743,29 @@ void CAnimEntityNode::OnReset()
 	m_audioTriggerTracks.clear();
 	m_audioParameterTracks.clear();
 
+	//FIEND: Originally 0-2, Added up to 10
 	m_baseAnimState.m_lastAnimationKeys[0][0] = -1;
 	m_baseAnimState.m_lastAnimationKeys[0][1] = -1;
 	m_baseAnimState.m_lastAnimationKeys[1][0] = -1;
 	m_baseAnimState.m_lastAnimationKeys[1][1] = -1;
 	m_baseAnimState.m_lastAnimationKeys[2][0] = -1;
 	m_baseAnimState.m_lastAnimationKeys[2][1] = -1;
+	m_baseAnimState.m_lastAnimationKeys[3][0] = -1;
+	m_baseAnimState.m_lastAnimationKeys[3][1] = -1;
+	m_baseAnimState.m_lastAnimationKeys[4][0] = -1;
+	m_baseAnimState.m_lastAnimationKeys[4][1] = -1;
+	m_baseAnimState.m_lastAnimationKeys[5][0] = -1;
+	m_baseAnimState.m_lastAnimationKeys[5][1] = -1;
+	m_baseAnimState.m_lastAnimationKeys[6][0] = -1;
+	m_baseAnimState.m_lastAnimationKeys[6][1] = -1;
+	m_baseAnimState.m_lastAnimationKeys[7][0] = -1;
+	m_baseAnimState.m_lastAnimationKeys[7][1] = -1;
+	m_baseAnimState.m_lastAnimationKeys[8][0] = -1;
+	m_baseAnimState.m_lastAnimationKeys[8][1] = -1;
+	m_baseAnimState.m_lastAnimationKeys[9][0] = -1;
+	m_baseAnimState.m_lastAnimationKeys[9][1] = -1;
+	m_baseAnimState.m_lastAnimationKeys[10][0] = -1;
+	m_baseAnimState.m_lastAnimationKeys[10][1] = -1;
 
 	m_lookAtTarget = "";
 	m_lookAtEntityId = 0;
@@ -1729,7 +1775,11 @@ void CAnimEntityNode::OnReset()
 	ReleaseAllAnims();
 	UpdateDynamicParams();
 
-	m_baseAnimState.m_layerPlaysAnimation[0] = m_baseAnimState.m_layerPlaysAnimation[1] = m_baseAnimState.m_layerPlaysAnimation[2] = false;
+	//FIEND: Originally 2, Added up to 10
+	m_baseAnimState.m_layerPlaysAnimation[0] = m_baseAnimState.m_layerPlaysAnimation[1] = m_baseAnimState.m_layerPlaysAnimation[2] =
+	m_baseAnimState.m_layerPlaysAnimation[3] = m_baseAnimState.m_layerPlaysAnimation[4] = m_baseAnimState.m_layerPlaysAnimation[5] = 
+	m_baseAnimState.m_layerPlaysAnimation[6] = m_baseAnimState.m_layerPlaysAnimation[7] = m_baseAnimState.m_layerPlaysAnimation[8] = 
+	m_baseAnimState.m_layerPlaysAnimation[9] = m_baseAnimState.m_layerPlaysAnimation[10] = false;
 
 	if (m_pOwner)
 	{
@@ -2181,7 +2231,12 @@ void CAnimEntityNode::ReleaseAllAnims()
 
 		pCharacter->SetPlaybackScale(1.0000f);
 		pCharacter->GetISkeletonAnim()->SetAnimationDrivenMotion(m_bWasTransRot);
-		m_baseAnimState.m_layerPlaysAnimation[0] = m_baseAnimState.m_layerPlaysAnimation[1] = m_baseAnimState.m_layerPlaysAnimation[2] = false;
+
+		//FIEND: Originally 0-2, Added up to 10
+		m_baseAnimState.m_layerPlaysAnimation[0] = m_baseAnimState.m_layerPlaysAnimation[1] = m_baseAnimState.m_layerPlaysAnimation[2] =
+		m_baseAnimState.m_layerPlaysAnimation[3] = m_baseAnimState.m_layerPlaysAnimation[4] = m_baseAnimState.m_layerPlaysAnimation[5] =
+		m_baseAnimState.m_layerPlaysAnimation[6] = m_baseAnimState.m_layerPlaysAnimation[7] = m_baseAnimState.m_layerPlaysAnimation[8] =
+		m_baseAnimState.m_layerPlaysAnimation[9] = m_baseAnimState.m_layerPlaysAnimation[10] = false;
 
 		NotifyEntityScript(pEntity, "OnSequenceAnimationStop");
 	}
@@ -2985,6 +3040,7 @@ void CAnimEntityNode::ApplyAnimKey(int32 keyIndex, class CCharacterTrack* track,
 
 		pCharacter->SetPlaybackScale(0.0000f);
 		float fNormalizedTime = t / duration;
+
 		assert(fNormalizedTime >= 0.0f && fNormalizedTime <= 1.0f);
 		pCharacter->GetISkeletonAnim()->ManualSeekAnimationInFIFO(layer, animIndex, fNormalizedTime, bAnimEvents);
 		pCharacter->GetISkeletonAnim()->SetLayerNormalizedTime(layer, fNormalizedTime);
@@ -3050,7 +3106,6 @@ void CAnimEntityNode::UpdateAnimRegular(int32 numActiveKeys, int32 activeKeys[],
 		{
 			break;
 		}
-
 		ApplyAnimKey(activeKeys[i], track, ectime, pCharacter, layer, i, bAnimEvents);
 	}
 }
@@ -3460,7 +3515,11 @@ void CAnimEntityNode::RestoreEntityDefaultValues()
 
 ILINE bool CAnimEntityNode::AnimationPlaying(const SAnimState& animState) const
 {
-	return animState.m_layerPlaysAnimation[0] || animState.m_layerPlaysAnimation[1] || animState.m_layerPlaysAnimation[2];
+	//FIEND: More Animation Layers
+	return	animState.m_layerPlaysAnimation[0] || animState.m_layerPlaysAnimation[1] || animState.m_layerPlaysAnimation[2] || 
+			animState.m_layerPlaysAnimation[3] || animState.m_layerPlaysAnimation[4] || animState.m_layerPlaysAnimation[5] ||
+			animState.m_layerPlaysAnimation[6] || animState.m_layerPlaysAnimation[7] || animState.m_layerPlaysAnimation[8] ||
+			animState.m_layerPlaysAnimation[9] || animState.m_layerPlaysAnimation[10];
 }
 
 #undef g_nodeParamsInitialized

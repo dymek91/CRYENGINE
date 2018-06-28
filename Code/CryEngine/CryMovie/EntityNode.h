@@ -10,8 +10,8 @@
 
 #define ENTITY_SOUNDTRACKS     3
 #define ENTITY_EXPRTRACKS      3
-#define MAX_CHARACTER_TRACKS   3
-#define ADDITIVE_LAYERS_OFFSET 6
+#define MAX_CHARACTER_TRACKS   10 //FIEND: Default was 3
+#define ADDITIVE_LAYERS_OFFSET 1 //FIEND: Default was 6
 #define DEFAULT_LOOKIK_LAYER   15
 
 // When preloading of a trackview sequence is triggered, the animations in
@@ -110,7 +110,6 @@ public:
 protected:
 	virtual bool         GetParamInfoFromType(const CAnimParamType& paramId, SParamInfo& info) const override;
 	int                  GetEntityId() const { return m_EntityId; }
-
 	void                 ReleaseSounds();
 	void                 ApplyEventKey(class CEventTrack* track, int keyIndex, SEventKey& key);
 	void                 ApplyAudioTriggerKey(CryAudio::ControlId audioTriggerId, bool const bPlay = true);
@@ -198,12 +197,12 @@ private:
 
 	struct SAnimState
 	{
-		int32 m_lastAnimationKeys[3][2];
-		bool  m_layerPlaysAnimation[3];
+		int32 m_lastAnimationKeys[10][2]; //FIEND: Default 3:2
+		bool  m_layerPlaysAnimation[10]; //FIEND: Default is 3, upping Array
 
 		//! This is used to indicate that a time-jumped blending is currently happening in the animation track.
-		bool  m_bTimeJumped[3];
-		float m_jumpTime[3];
+		bool  m_bTimeJumped[10]; //FIEND: 3
+		float m_jumpTime[10]; //FIEND: 3
 	};
 
 	SAnimState              m_baseAnimState;
