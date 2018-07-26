@@ -17,8 +17,12 @@
 
 #include <CryExtension/ClassWeaver.h>
 #include <CrySystem/IEngineModule.h>
+#include <CrySystem/TimeValue.h>
+#include <CryCore/BaseTypes.h>
 #include <CryCore/CryVariant.h>
 #include "IRenderView.h"
+
+#include <vector>
 
 // forward declarations
 struct SRenderingPassInfo;
@@ -563,6 +567,7 @@ struct CRY_ALIGN(16) SAddParticlesToSceneJob
 	IParticleVertexCreator* pVertexCreator = nullptr;
 	gpu_pfx2::IParticleComponentRuntime* pGpuRuntime = nullptr;
 	int16 nCustomTexId;
+	AABB aabb;
 };
 
 #ifdef SUPPORT_HW_MOUSE_CURSOR
@@ -655,28 +660,6 @@ enum EDrawTextFlags
 	eDrawText_IgnoreOverscan = BIT(10), //!< Ignore the overscan borders, text should be drawn at the location specified.
 	eDrawText_LegacyBehavior = BIT(11)  //!< Reserved for internal system use.
 };
-
-// Debug stats/views for Partial resolves
-// if REFRACTION_PARTIAL_RESOLVE_DEBUG_VIEWS is enabled, make sure REFRACTION_PARTIAL_RESOLVE_STATS is too
-#if defined(PERFORMANCE_BUILD)
-	#define REFRACTION_PARTIAL_RESOLVE_STATS       1
-	#define REFRACTION_PARTIAL_RESOLVE_DEBUG_VIEWS 0
-#elif defined(_RELEASE) // note: _RELEASE is defined in PERFORMANCE_BUILD, so this check must come second
-	#define REFRACTION_PARTIAL_RESOLVE_STATS       0
-	#define REFRACTION_PARTIAL_RESOLVE_DEBUG_VIEWS 0
-#else
-	#define REFRACTION_PARTIAL_RESOLVE_STATS       1
-	#define REFRACTION_PARTIAL_RESOLVE_DEBUG_VIEWS 1
-#endif
-
-#if REFRACTION_PARTIAL_RESOLVE_DEBUG_VIEWS
-enum ERefractionPartialResolvesDebugViews
-{
-	eRPR_DEBUG_VIEW_2D_AREA = 1,
-	eRPR_DEBUG_VIEW_3D_BOUNDS,
-	eRPR_DEBUG_VIEW_2D_AREA_OVERLAY
-};
-#endif
 
 //! \cond INTERNAL
 //! This structure used in DrawText method of renderer.
@@ -858,6 +841,21 @@ struct RPProfilerStats
 	float _gpuTimeMaxNew;
 };
 
+// See CRenderPipelineProfiler::SProfilerSection
+struct RPProfilerDetailedStats
+{
+	char            name[31];
+	float           gpuTime;
+	float           gpuTimeSmoothed;
+	float           cpuTime;
+	float           cpuTimeSmoothed;
+	CTimeValue      startTimeCPU, endTimeCPU;
+	uint64          startTimeGPU, endTimeGPU;
+	int             numDIPs, numPolys;
+	int8            recLevel;   // Negative value means error in stack
+	uint8           flags;
+};
+
 struct ISvoRenderer
 {
 	virtual bool IsShaderItemUsedForVoxelization(SShaderItem& rShaderItem, IRenderNode* pRN) { return false; }
@@ -866,6 +864,8 @@ struct ISvoRenderer
 	virtual void InitCVarValues()                                                            {}
 };
 
+//! \cond INTERNAL
+//! Describes the key used to create display context
 struct SDisplayContextKey
 {
 	struct SInvalidKey
@@ -940,7 +940,7 @@ struct IRenderer//: public IRendererCallbackServer
 		HWND handle  = 0; // WIN_HWND
 
 		ColorF clearColor               = Clr_Empty;
-		ColorF clearDepthStencil        = Clr_FarPlane;
+		ColorF clearDepthStencil        = Clr_FarPlane_Rev;
 		Vec2i  superSamplingFactor      = { 1, 1 };
 		Vec2i  screenResolution         = { 0, 0 };
 
@@ -1148,9 +1148,9 @@ struct IRenderer//: public IRendererCallbackServer
 	virtual bool FlushRTCommands(bool bWait, bool bImmediatelly, bool bForce) = 0;
 	virtual int  CurThreadList() = 0;
 
-	virtual void FlashRender(IFlashPlayer_RenderProxy* pPlayer) = 0;
-	virtual void FlashRenderPlaybackLockless(IFlashPlayer_RenderProxy* pPlayer, int cbIdx, bool finalPlayback) = 0;
-	virtual void FlashRenderPlayer(IFlashPlayer* pPlayer) = 0;
+	virtual void FlashRender(std::shared_ptr<IFlashPlayer_RenderProxy> &&pPlayer) = 0;
+	virtual void FlashRenderPlaybackLockless(std::shared_ptr<IFlashPlayer_RenderProxy> &&pPlayer, int cbIdx, bool finalPlayback) = 0;
+	virtual void FlashRenderPlayer(std::shared_ptr<IFlashPlayer> &&pPlayer) = 0;
 	virtual void FlashRemoveTexture(ITexture* pTexture) = 0;
 
 	/////////////////////////////////////////////////////////////////////////////////
@@ -1237,7 +1237,7 @@ struct IRenderer//: public IRendererCallbackServer
 
 	//! Load lightmap for name.
 	virtual int  EF_LoadLightmap(const char* name) = 0;
-	virtual bool EF_RenderEnvironmentCubeHDR(int size, const Vec3& Pos, TArray<unsigned short>& vecData) = 0;
+	virtual DynArray<uint16_t> EF_RenderEnvironmentCubeHDR(size_t size, const Vec3& Pos) = 0;
 	// Writes a TIF file to the system with the requested preset
 	// Intended for use with EF_RenderEnvironmentCubeHDR
 	virtual bool WriteTIFToDisk(const void* pData, int width, int height, int bytesPerChannel, int numChannels, bool bFloat, const char* szPreset, const char* szFileName) = 0;
@@ -1482,9 +1482,6 @@ struct IRenderer//: public IRendererCallbackServer
 
 	virtual void                OnEntityDeleted(struct IRenderNode* pRenderNode) = 0;
 
-	virtual int                 CreateRenderTarget(int nWidth, int nHeight, const ColorF& cClear, ETEX_Format eTF) = 0;
-	virtual bool                DestroyRenderTarget(int nHandle) = 0;
-
 	virtual float               EF_GetWaterZElevation(float fX, float fY) = 0;
 
 	virtual IOpticsElementBase* CreateOptics(EFlareType type) const = 0;
@@ -1518,44 +1515,45 @@ struct IRenderer//: public IRendererCallbackServer
 		}
 	};
 
-	virtual IScaleformPlayback*                       SF_CreatePlayback() const = 0;
-	virtual int                                       SF_CreateTexture(int width, int height, int numMips, const unsigned char* pData, ETEX_Format eTF, int flags) = 0;
-	virtual bool                                      SF_UpdateTexture(int texId, int mipLevel, int numRects, const SUpdateRect* pRects, const unsigned char* pData, size_t pitch, size_t size, ETEX_Format eTF) = 0;
-	virtual bool                                      SF_ClearTexture(int texId, int mipLevel, int numRects, const SUpdateRect* pRects, const unsigned char* pData) = 0;
-	virtual void                                      SF_Playback(IScaleformPlayback* pRenderer, GRendererCommandBufferReadOnly* pBuffer) const = 0;
-	virtual void                                      SF_Drain(GRendererCommandBufferReadOnly* pBuffer) const = 0;
-	virtual void                                      SF_GetMeshMaxSize(int& numVertices, int& numIndices) const = 0;
+	virtual IScaleformPlayback*                         SF_CreatePlayback() const = 0;
+	virtual int                                         SF_CreateTexture(int width, int height, int numMips, const unsigned char* pData, ETEX_Format eTF, int flags) = 0;
+	virtual bool                                        SF_UpdateTexture(int texId, int mipLevel, int numRects, const SUpdateRect* pRects, const unsigned char* pData, size_t pitch, size_t size, ETEX_Format eTF) = 0;
+	virtual bool                                        SF_ClearTexture(int texId, int mipLevel, int numRects, const SUpdateRect* pRects, const unsigned char* pData) = 0;
+	virtual void                                        SF_Playback(IScaleformPlayback* pRenderer, GRendererCommandBufferReadOnly* pBuffer) const = 0;
+	virtual void                                        SF_Drain(GRendererCommandBufferReadOnly* pBuffer) const = 0;
+	virtual void                                        SF_GetMeshMaxSize(int& numVertices, int& numIndices) const = 0;
 
-	virtual ITexture*                                 CreateTexture(const char* name, int width, int height, int numMips, unsigned char* pData, ETEX_Format eTF, int flags) = 0;
-	virtual ITexture*                                 CreateTextureArray(const char* name, ETEX_Type eType, uint32 nWidth, uint32 nHeight, uint32 nArraySize, int nMips, uint32 nFlags, ETEX_Format eTF, int nCustomID) = 0;
+	virtual ITexture*                                   CreateTexture(const char* name, int width, int height, int numMips, unsigned char* pData, ETEX_Format eTF, int flags) = 0;
+	virtual ITexture*                                   CreateTextureArray(const char* name, ETEX_Type eType, uint32 nWidth, uint32 nHeight, uint32 nArraySize, int nMips, uint32 nFlags, ETEX_Format eTF, int nCustomID) = 0;
 
-	virtual const RPProfilerStats*                    GetRPPStats(ERenderPipelineProfilerStats eStat, bool bCalledFromMainThread = true) = 0;
-	virtual const RPProfilerStats*                    GetRPPStatsArray(bool bCalledFromMainThread = true) = 0;
+	virtual const RPProfilerStats*                      GetRPPStats(ERenderPipelineProfilerStats eStat, bool bCalledFromMainThread = true) = 0;
+	virtual const RPProfilerStats*                      GetRPPStatsArray(bool bCalledFromMainThread = true) = 0;
+	virtual const DynArray<RPProfilerDetailedStats>*    GetRPPDetailedStatsArray(bool bCalledFromMainThread = true) = 0;
 
-	virtual int                                       GetPolygonCountByType(uint32 EFSList, EVertexCostTypes vct, uint32 z, bool bCalledFromMainThread = true) = 0;
+	virtual int                                         GetPolygonCountByType(uint32 EFSList, EVertexCostTypes vct, uint32 z, bool bCalledFromMainThread = true) = 0;
 
-	virtual void                                      StartLoadtimeFlashPlayback(ILoadtimeCallback* pCallback) = 0;
-	virtual void                                      StopLoadtimeFlashPlayback() = 0;
+	virtual void                                        StartLoadtimeFlashPlayback(ILoadtimeCallback* pCallback) = 0;
+	virtual void                                        StopLoadtimeFlashPlayback() = 0;
+				                                        
+	virtual void                                        SetCloudShadowsParams(int nTexID, const Vec3& speed, float tiling, bool invert, float brightness) = 0;
+	virtual void                                        SetVolumetricCloudParams(int nTexID) = 0;
+	virtual void                                        SetVolumetricCloudNoiseTex(int cloudNoiseTexId, int edgeNoiseTexId) = 0;
 
-	virtual void                                      SetCloudShadowsParams(int nTexID, const Vec3& speed, float tiling, bool invert, float brightness) = 0;
-	virtual void                                      SetVolumetricCloudParams(int nTexID) = 0;
-	virtual void                                      SetVolumetricCloudNoiseTex(int cloudNoiseTexId, int edgeNoiseTexId) = 0;
+	virtual int                                         GetMaxTextureSize() = 0;
 
-	virtual int                                       GetMaxTextureSize() = 0;
+	virtual const char*                                 GetTextureFormatName(ETEX_Format eTF) = 0;
+	virtual int                                         GetTextureFormatDataSize(int nWidth, int nHeight, int nDepth, int nMips, ETEX_Format eTF) = 0;
+	virtual bool                                        IsTextureFormatSupported(ETEX_Format eTF) = 0;
 
-	virtual const char*                               GetTextureFormatName(ETEX_Format eTF) = 0;
-	virtual int                                       GetTextureFormatDataSize(int nWidth, int nHeight, int nDepth, int nMips, ETEX_Format eTF) = 0;
-	virtual bool                                      IsTextureFormatSupported(ETEX_Format eTF) = 0;
+	virtual void                                        SetDefaultMaterials(IMaterial* pDefMat, IMaterial* pTerrainDefMat) = 0;
 
-	virtual void                                      SetDefaultMaterials(IMaterial* pDefMat, IMaterial* pTerrainDefMat) = 0;
-
-	virtual uint32                                    GetActiveGPUCount() const = 0;
-	virtual ShadowFrustumMGPUCache*                   GetShadowFrustumMGPUCache() = 0;
-	virtual const StaticArray<int, MAX_GSM_LODS_NUM>& GetCachedShadowsResolution() const = 0;
-	virtual void                                      SetCachedShadowsResolution(const StaticArray<int, MAX_GSM_LODS_NUM>& arrResolutions) = 0;
-	virtual void                                      UpdateCachedShadowsLodCount(int nGsmLods) const = 0;
-
-	virtual void                                      SetTexturePrecaching(bool stat) = 0;
+	virtual uint32                                      GetActiveGPUCount() const = 0;
+	virtual ShadowFrustumMGPUCache*                     GetShadowFrustumMGPUCache() = 0;
+	virtual const StaticArray<int, MAX_GSM_LODS_NUM>&   GetCachedShadowsResolution() const = 0;
+	virtual void                                        SetCachedShadowsResolution(const StaticArray<int, MAX_GSM_LODS_NUM>& arrResolutions) = 0;
+	virtual void                                        UpdateCachedShadowsLodCount(int nGsmLods) const = 0;
+				                                        
+	virtual void                                        SetTexturePrecaching(bool stat) = 0;
 
 	//! Platform-specific.
 	virtual void RT_InsertGpuCallback(uint32 context, GpuCallbackFunc callback) = 0;
@@ -1650,8 +1648,8 @@ struct IRenderer//: public IRendererCallbackServer
 	virtual void SyncComputeVerticesJobs() = 0;
 
 	//! Lock/Unlock the video memory buffer used by particles when using the jobsystem.
-	virtual void  LockParticleVideoMemory() = 0;
-	virtual void  UnLockParticleVideoMemory() = 0;
+	virtual void  LockParticleVideoMemory(int frameId) = 0;
+	virtual void  UnLockParticleVideoMemory(int frameId) = 0;
 
 	virtual void  ActivateLayer(const char* pLayerName, bool activate) = 0;
 

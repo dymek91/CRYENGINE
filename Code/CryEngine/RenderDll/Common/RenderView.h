@@ -104,6 +104,13 @@ public:
 		eShadowFrustumRenderType_First = eShadowFrustumRenderType_SunCached
 	};
 
+	struct STransparentSegment
+	{
+		std::vector<TRect_tpl<std::uint16_t>> resolveRects;
+		TRange<int>                           rendItems = { 0 };
+	};
+	using STransparentSegments = std::vector<STransparentSegment>;
+
 	//typedef CThreadSafeWorkerContainer<SRendItem> RenderItems;
 	typedef lockfree_add_vector<SRendItem>       RenderItems;
 	typedef std::vector<SShadowFrustumToRender>  ShadowFrustums;
@@ -181,7 +188,6 @@ public:
 	~CRenderView();
 
 	EViewType    GetType() const                         { return m_viewType;  }
-	void         SetManaged()                            { m_bManaged = true; }
 
 	void         SetParentView(CRenderView* pParentView) { m_pParentView = pParentView; };
 	CRenderView* GetParentView() const                   { return m_pParentView;  };
@@ -258,19 +264,22 @@ public:
 	//////////////////////////////////////////////////////////////////////////
 	// Dynamic Lights
 	//////////////////////////////////////////////////////////////////////////
+
+	virtual RenderLightIndex AddDeferredLight(const SRenderLight& pDL, float fMult, const SRenderingPassInfo& passInfo) final;
+
 	virtual RenderLightIndex AddDynamicLight(const SRenderLight& light) final;
 	virtual RenderLightIndex GetDynamicLightsCount() const final;
 	virtual SRenderLight&    GetDynamicLight(RenderLightIndex nLightId) final;
 
 	virtual RenderLightIndex AddLight(eDeferredLightType lightType, const SRenderLight& light) final;
 	virtual RenderLightIndex GetLightsCount(eDeferredLightType lightType) const final;
-	virtual SRenderLight& GetLight(eDeferredLightType lightType, RenderLightIndex nLightId) final;
+	virtual SRenderLight&    GetLight(eDeferredLightType lightType, RenderLightIndex nLightId) final;
 
-	RenderLightsList&     GetLightsArray(eDeferredLightType lightType);
-	SRenderLight*         AddLightAtIndex(eDeferredLightType lightType, const SRenderLight& light, RenderLightIndex index = -1);
+	RenderLightsList&        GetLightsArray(eDeferredLightType lightType);
+	SRenderLight*            AddLightAtIndex(eDeferredLightType lightType, const SRenderLight& light, RenderLightIndex index = -1);
 
-	bool                  HaveSunLight() { return GetSunLight() != nullptr; }
-	const SRenderLight*   GetSunLight() const;
+	bool                     HaveSunLight() { return GetSunLight() != nullptr; }
+	const SRenderLight*      GetSunLight() const;
 	//////////////////////////////////////////////////////////////////////////
 
 	//////////////////////////////////////////////////////////////////////////
@@ -335,6 +344,22 @@ public:
 	void                   CompileModifiedRenderObjects();
 	void                   CalculateViewInfo();
 
+	void                   StartOptimizeTransparentRenderItemsResolvesJob();
+	void                   WaitForOptimizeTransparentRenderItemsResolvesJob() const;
+	bool                   HasResolveForList(ERenderListID list) const
+	{
+		const auto refractionMask = FB_REFRACTION | FB_RESOLVE_FULL;
+		const auto flags = GetBatchFlags(list);
+		return (list == EFSLIST_TRANSP_BW || list == EFSLIST_TRANSP_AW || list == EFSLIST_TRANSP_NEAREST) && 
+			!!(flags & refractionMask) && CRendererCVars::CV_r_Refraction;
+	}
+	const STransparentSegments& GetTransparentSegments(ERenderListID list) const
+	{
+		CRY_ASSERT_MESSAGE(list == EFSLIST_TRANSP_BW || list == EFSLIST_TRANSP_AW || list == EFSLIST_TRANSP_NEAREST, "'list' does not name a transparent list");
+		const int idx = static_cast<int>(list - EFSLIST_TRANSP_BW);
+		return m_transparentSegments[idx];
+	}
+
 private:
 	void                   DeleteThis() const override;
 
@@ -344,48 +369,53 @@ private:
 	void                   ExpandPermanentRenderObjects();
 	void                   UpdateModifiedShaderItems();
 	void                   ClearTemporaryCompiledObjects();
-	void                   PrepareNearestShadows();
 	void                   CheckAndScheduleForUpdate(const SShaderItem& shaderItem) threadsafe;
 	template<bool bConcurrent>
-	void                   AddRenderItemToRenderLists(const SRendItem& ri, int nRenderList, int nBatchFlags, const SShaderItem& shaderItem) threadsafe;
+	void                   AddRenderItemToRenderLists(const SRendItem& ri, int nRenderList, CRenderObject* RESTRICT_POINTER pObj, const SShaderItem& shaderItem) threadsafe;
 
 	CCompiledRenderObject* AllocCompiledObject(CRenderObject* pObj, CRenderElement* pElem, const SShaderItem& shaderItem);
-	CCompiledRenderObject* AllocCompiledObjectTemporary(CRenderObject* pObj, CRenderElement* pElem, const SShaderItem& shaderItem);
 
-
+	std::size_t            OptimizeTransparentRenderItemsResolves(STransparentSegments &segments, RenderItems &renderItems, std::size_t total_resolve_count) const;
+	TRect_tpl<uint16>      ComputeResolveViewport(const AABB &aabb, bool forceFullscreenUpdate) const;
+	STransparentSegments&  GetTransparentSegments(ERenderListID list)
+	{
+		CRY_ASSERT_MESSAGE(list == EFSLIST_TRANSP_BW || list == EFSLIST_TRANSP_AW || list == EFSLIST_TRANSP_NEAREST, "'list' does not name a transparent list");
+		const int idx = static_cast<int>(list - EFSLIST_TRANSP_BW);
+		return m_transparentSegments[idx];
+	}
+	
 private:
-	EUsageMode m_usageMode;
-	EViewType  m_viewType;
-	string     m_name;
+	EUsageMode       m_usageMode;
+	const EViewType  m_viewType;
+	string           m_name;
 	/// @See SRenderingPassInfo::ESkipRenderingFlags
-	uint32     m_skipRenderingFlags;
+	uint32           m_skipRenderingFlags;
 	/// @see EShaderRenderingFlags
-	uint32     m_shaderRenderingFlags;
-	bool       m_bManaged = false;
+	uint32           m_shaderRenderingFlags;
 
-	int        m_frameId;
-	CTimeValue m_frameTime;
+	int              m_frameId;
+	CTimeValue       m_frameTime;
 
 	// For shadows or recursive view parent will be main rendering view
-	CRenderView*    m_pParentView;
+	CRenderView*     m_pParentView;
 
-	RenderItems     m_renderItems[EFSLIST_NUM];
+	RenderItems      m_renderItems[EFSLIST_NUM];
 
-	volatile uint32 m_BatchFlags[EFSLIST_NUM];
+	volatile uint32  m_BatchFlags[EFSLIST_NUM];
 	// For general passes initialized as a pointers to the m_BatchFlags
 	// But for shadow pass it will be a pointer to the shadow frustum side mask
 	//volatile uint32* m_pFlagsPointer[EFSLIST_NUM];
 
-	// A storage pool for the temporary rendering objects.
-	CThreadSafeWorkerContainer<CRenderObject*> m_temporaryRenderObjects;
-	CRenderObject*                             m_temporaryRenderObjectsPool = nullptr;
+	// Resolve passes information
+	STransparentSegments m_transparentSegments[3];
+	mutable CryJobState  m_optimizeTransparentRenderItemsResolvesJobStatus;
 
 	// Temporary render objects storage
 	struct STempObjects
 	{
 		CThreadSafeWorkerContainer<CRenderObject*> tempObjects;
 		CRenderObject*                             pRenderObjectsPool = nullptr;
-		uint32 numObjectsInPool = 0;
+		uint32                                     numObjectsInPool = 0;
 		CryCriticalSection                         accessLock;
 	};
 	STempObjects m_tempRenderObjects;
@@ -440,10 +470,9 @@ private:
 	uint32           m_RenderWidth = -1;
 	uint32           m_RenderHeight = -1;
 
-	CRenderOutputPtr                 m_pRenderOutput; // Output render target (currently used for recursive pass and secondary viewport)
-	TexSmartPtr                      m_pColorTarget = nullptr;
-	TexSmartPtr                      m_pDepthTarget = nullptr;
-	CRendererResources::CTempTexture m_pTempDepthTexture = nullptr;
+	CRenderOutputPtr m_pRenderOutput; // Output render target (currently used for recursive pass and secondary viewport)
+	TexSmartPtr      m_pColorTarget = nullptr;
+	TexSmartPtr      m_pDepthTarget = nullptr;
 
 	SRenderViewport  m_viewport;
 
@@ -455,14 +484,18 @@ private:
 	// Render objects modified by this view.
 	struct SPermanentRenderObjectCompilationData
 	{
-		CPermanentRenderObject* pObject;
-		EObjectCompilationOptions     compilationFlags;
+		CPermanentRenderObject*    pObject;
+		EObjectCompilationOptions  compilationFlags;
 	};
 	lockfree_add_vector<SPermanentRenderObjectCompilationData> m_permanentRenderObjectsToCompile;
 
 	// Temporary compiled objects for this frame
-	struct SCompiledPair { CRenderObject* pRenderObject; CCompiledRenderObject* pCompiledObject; };
-	lockfree_add_vector<SCompiledPair> m_temporaryCompiledObjects;
+	struct STemporaryRenderObjectCompilationData
+	{
+		CCompiledRenderObject* pObject;
+		AABB                   localAABB;
+	};
+	lockfree_add_vector<STemporaryRenderObjectCompilationData> m_temporaryCompiledObjects;
 
 	// shader items that need to be updated
 	lockfree_add_vector<std::pair<CShaderResources*, CShader*>> m_shaderItemsToUpdate;
@@ -494,7 +527,7 @@ private:
 	CryCriticalSectionNonRecursive m_lock_UsageMode;
 	CryCriticalSectionNonRecursive m_lock_PostWrite;
 
-	volatile int                   m_bPostWriteExecuted;
+	std::atomic<bool>              m_bPostWriteExecuted;
 
 	// Constants to pass to shaders.
 	SRenderViewShaderConstants m_shaderConstants;
@@ -504,12 +537,16 @@ private:
 
 	struct SShadows
 	{
+		using TiledShadingFrustumCoveragePair =    std::pair<SShadowFrustumToRender*, Vec4>;
+		using TiledShadingFrustumListByMaskSlice = std::vector<std::vector<TiledShadingFrustumCoveragePair>>;
+
 		// Shadow frustums needed for a view.
 		ShadowMapFrustum*                                             m_pShadowFrustumOwner;
 		std::vector<SShadowFrustumToRender>                           m_renderFrustums;
 
 		std::map<int, ShadowFrustumsPtr>                              m_frustumsByLight;
 		std::array<ShadowFrustumsPtr, eShadowFrustumRenderType_Count> m_frustumsByType;
+		TiledShadingFrustumListByMaskSlice                            m_frustumsPerTiledShadingSlice;
 
 		CThreadSafeRendererContainer<AABB>                            m_nearestCasterBoxes;
 
@@ -517,6 +554,7 @@ private:
 		void AddNearestCaster(CRenderObject* pObj, const SRenderingPassInfo& passInfo);
 		void CreateFrustumGroups();
 		void PrepareNearestShadows();
+		void GenerateSortedFrustumsForTiledShadingByScreenspaceOverlap();
 	};
 
 public:// temp

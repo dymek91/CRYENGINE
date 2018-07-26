@@ -239,6 +239,22 @@ add_sources("CryRenderer_uber_5_dx12_dx12.cpp"
 )
 
 add_sources("NoUberFile"
+	PROJECTS CryRenderD3D11
+	SOURCE_GROUP "DX11"
+		"DX11/CryDX11.cpp"
+		"DX11/CryDX11.hpp"
+	SOURCE_GROUP "DX11\\\\API"
+		"DX11/API/DX11Base.cpp"
+		"DX11/API/DX11CommandScheduler.cpp"
+		"DX11/API/DX11CommandListFence.cpp"
+		"DX11/API/DX11Device.cpp"
+		"DX11/API/DX11Base.hpp"
+		"DX11/API/DX11CommandScheduler.hpp"
+		"DX11/API/DX11CommandListFence.hpp"
+		"DX11/API/DX11Device.hpp"
+)
+
+add_sources("NoUberFile"
 	PROJECTS CryRenderD3D12
 	SOURCE_GROUP "DX12"
 		"DX12/CCryDX12Object.cpp"
@@ -808,7 +824,6 @@ add_sources("CryRenderer_textures_uber.cpp"
 		"../Common/Textures/StatoscopeTextureStreaming.cpp"
 		"../Common/Textures/DynTexture.cpp"
 		"../Common/Textures/PowerOf2BlockPacker.cpp"
-		"../Common/Textures/DepthTexture.cpp"
 		"../Common/Textures/Texture.cpp"
 		"../Common/Textures/TextureManager.cpp"
 		"../Common/Textures/TextureStreaming.cpp"
@@ -818,8 +833,6 @@ add_sources("CryRenderer_textures_uber.cpp"
 		"../Common/Textures/TextureCompiler.h"
 		"../Common/Textures/TextureStreamPool.h"
 		"../Common/Textures/PowerOf2BlockPacker.h"
-		"../Common/Textures/DepthTexture.h"
-		"../Common/Textures/TempDepthTexture.h"
 		"../Common/Textures/Texture.h"
 		"../Common/Textures/TextureManager.h"
 		"../Common/Textures/TextureHelpers.cpp"
@@ -925,6 +938,7 @@ add_sources("CryRenderer_uber_3.cpp"
 		"../Common/TextMessages.h"
 		"../Common/Include_HLSL_CPP_Shared.h"
 		"../Common/RenderView.cpp"
+		"../Common/OptimizeTransparentRenderItemsResolves.cpp"
 		"../Common/RenderOutput.cpp"
 		"../Common/RenderOutput.h"
 		"../Common/RenderDisplayContext.cpp"
@@ -943,7 +957,6 @@ add_sources("CryRenderer_uber_3.cpp"
 		"../Common/Renderer.h"
 		"../Common/RendererCVars.h"
 		"../Common/RendererResources.h"
-		"../Common/ResourcePool.h"
 		"../Common/RenderThread.h"
 		"../Common/Shadow_Renderer.h"
 		"../Common/ShadowUtils.h"
@@ -1180,14 +1193,14 @@ if (NOT EXISTS "${SDK_DIR}/NVIDIA/NVAPI_r386")
 	list(APPEND extra_defines -DEXCLUDE_NV_API)
 endif()
 
-if (NOT EXISTS "${SDK_DIR}/AMD")
+if (NOT EXISTS "${SDK_DIR}/AMD/AGS Lib")
 	message(STATUS "AMD AGS SDK not found, excluding from the build.")
 	list(APPEND extra_defines -DEXCLUDE_AMD_API)
 endif()
 
 if (RENDERER_DX11)
 	CryEngineModule(CryRenderD3D11 FORCE_SHARED_WIN PCH "../StdAfx.cpp" SOLUTION_FOLDER "CryEngine")
-
+	
 	target_include_directories(${THIS_PROJECT} PRIVATE .. "${SDK_DIR}/squish-ccr")
 	target_link_libraries(${THIS_PROJECT} PRIVATE lzma lzss lz4 zlib)
 
@@ -1264,7 +1277,7 @@ if (RENDERER_DX12)
 	target_link_libraries(${THIS_PROJECT} PRIVATE lzma lzss lz4 zlib)
 
 	if (WIN32 OR WIN64)
-		set_target_properties(${THIS_PROJECT} PROPERTIES LINK_FLAGS /NODEFAULTLIB:libcmt.lib)
+	set_target_properties(${THIS_PROJECT} PROPERTIES LINK_FLAGS /NODEFAULTLIB:libcmt.lib)
 		target_link_libraries(${THIS_PROJECT} PRIVATE lzma lzss lz4 zlib dxguid d3d12 dxgi d3dcompiler Ole32 Gdi32 wininet Shell32 png16 tiff)
 	elseif(DURANGO)
 		target_link_libraries(${THIS_PROJECT} PRIVATE ws2_32 SmartGlassInterop d3d12_x d3dcompiler dxguid xg_x uuid kernelx)

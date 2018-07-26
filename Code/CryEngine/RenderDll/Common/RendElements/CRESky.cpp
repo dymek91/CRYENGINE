@@ -16,9 +16,9 @@ InputLayoutHandle CRESky::GetVertexFormat() const
 
 bool CRESky::GetGeometryInfo(SGeometryInfo& streams, bool bSupportTessellation)
 {
-	ZeroStruct(streams);
 	streams.eVertFormat = GetVertexFormat();
 	streams.primitiveType = eptTriangleList;
+
 	return true;
 }
 
@@ -27,7 +27,7 @@ bool CRESky::Compile(CRenderObject* pObj, CRenderView *pRenderView, bool updateI
 	return true;
 }
 
-void CRESky::DrawToCommandList(CRenderObject* pObj, const struct SGraphicsPipelinePassContext& ctx)
+void CRESky::DrawToCommandList(CRenderObject* pObj, const struct SGraphicsPipelinePassContext& ctx, CDeviceCommandList* commandList)
 {
 	gcpRendD3D->GetGraphicsPipeline().GetSceneForwardStage()->SetSkyRE(this, nullptr);
 }
@@ -70,9 +70,9 @@ InputLayoutHandle CREHDRSky::GetVertexFormat() const
 
 bool CREHDRSky::GetGeometryInfo(SGeometryInfo& streams, bool bSupportTessellation)
 {
-	ZeroStruct(streams);
 	streams.eVertFormat = GetVertexFormat();
 	streams.primitiveType = eptTriangleList;
+
 	return true;
 }
 
@@ -99,7 +99,7 @@ bool CREHDRSky::Compile(CRenderObject* pObj, CRenderView *pRenderView, bool upda
 	return true;
 }
 
-void CREHDRSky::DrawToCommandList(CRenderObject* pObj, const struct SGraphicsPipelinePassContext& ctx)
+void CREHDRSky::DrawToCommandList(CRenderObject* pObj, const struct SGraphicsPipelinePassContext& ctx, CDeviceCommandList* commandList)
 {
 	gcpRendD3D->GetGraphicsPipeline().GetSceneForwardStage()->SetSkyRE(nullptr, this);
 }

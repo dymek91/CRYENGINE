@@ -186,7 +186,7 @@ void CHud3D::CalculateProjMatrix()
 
 	const auto& viewInfo = gcpRendD3D.GetGraphicsPipeline().GetCurrentViewInfo(CCamera::eEye_Left);
 	// Patch projection matrix to have HUD FOV
-	m_mProj = viewInfo.projMatrix;
+	m_mProj = viewInfo.unjitteredProjMatrix;
 
 	// Calc aspect ratio
 	const float cameraPixelAspectRatio = viewInfo.pCamera->GetPixelAspectRatio();
@@ -542,7 +542,7 @@ void CHud3D::ReleaseFlashPlayerRef(const uint32 nThreadID)
 	for (uint32 r = 0; r < nRECount; ++r)
 	{
 		SHudData& pData = m_pRenderData[nThreadID][r];
-		SAFE_RELEASE(pData.pFlashPlayer);
+		pData.pFlashPlayer = nullptr;
 	}
 }
 ////////////////////////////////////////////////////////////////////////////////////////////////////

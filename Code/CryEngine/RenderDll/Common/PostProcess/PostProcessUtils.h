@@ -12,7 +12,6 @@
 #ifndef _POSTPROCESSUTILS_H_
 #define _POSTPROCESSUTILS_H_
 
-struct SDepthTexture;
 class CShader;
 
 struct SPostEffectsUtils
@@ -175,13 +174,6 @@ struct SPostEffectsUtils
 		float g = 1.0f / (2.0f * PI * rho * rho);
 		g *= expf(-(x * x + y * y) / (2 * rho * rho));
 		return g;
-	}
-
-	static CTexture* GetTaaRT(CRenderView* pRenderView,bool bCurrentFrame = true)
-	{
-		int eye = static_cast<int>(pRenderView->GetCurrentEye());
-		int index = bCurrentFrame ? (SPostEffectsUtils::m_iFrameCounter % 2) : ((SPostEffectsUtils::m_iFrameCounter + 1) % 2);
-		return CRendererResources::s_ptexPrevBackBuffer[index][eye];
 	}
 
 	static CTexture* GetVelocityObjectRT(CRenderView* pRenderView)

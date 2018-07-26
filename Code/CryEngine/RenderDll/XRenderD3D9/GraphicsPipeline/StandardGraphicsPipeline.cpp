@@ -54,9 +54,9 @@
 #include "D3D_SVO.h"
 
 CStandardGraphicsPipeline::CStandardGraphicsPipeline()
-	: m_changedCVars(gEnv->pConsole)
-	, m_defaultMaterialBindPoints()
-	, m_defaultInstanceExtraResources()
+	: m_defaultMaterialBindPoints()
+	, m_defaultDrawExtraRL()
+	, m_changedCVars(gEnv->pConsole)
 {}
 
 void CStandardGraphicsPipeline::Init()
@@ -85,16 +85,19 @@ void CStandardGraphicsPipeline::Init()
 
 	// default extra per instance
 	{
-		EShaderStage shaderStages = EShaderStage_Vertex | EShaderStage_Pixel | EShaderStage_Hull | EShaderStage_Domain;
+		m_defaultDrawExtraRL.SetConstantBuffer(eConstantBufferShaderSlot_SkinQuat    , CDeviceBufferManager::GetNullConstantBuffer(), EShaderStage_Vertex);
+		m_defaultDrawExtraRL.SetConstantBuffer(eConstantBufferShaderSlot_SkinQuatPrev, CDeviceBufferManager::GetNullConstantBuffer(), EShaderStage_Vertex);
+		m_defaultDrawExtraRL.SetConstantBuffer(eConstantBufferShaderSlot_PerGroup    , CDeviceBufferManager::GetNullConstantBuffer(), EShaderStage_Vertex | EShaderStage_Pixel | EShaderStage_Hull);
 
-		m_defaultInstanceExtraResources.SetConstantBuffer(eConstantBufferShaderSlot_SkinQuat, CDeviceBufferManager::GetNullConstantBuffer(), shaderStages);
-		m_defaultInstanceExtraResources.SetConstantBuffer(eConstantBufferShaderSlot_SkinQuatPrev, CDeviceBufferManager::GetNullConstantBuffer(), shaderStages);
-		m_defaultInstanceExtraResources.SetBuffer(EReservedTextureSlot_SkinExtraWeights, CDeviceBufferManager::GetNullBufferStructured(), EDefaultResourceViews::Default, shaderStages);
-		m_defaultInstanceExtraResources.SetBuffer(EReservedTextureSlot_AdjacencyInfo, CDeviceBufferManager::GetNullBufferTyped(), EDefaultResourceViews::Default, shaderStages);    // shares shader slot with EReservedTextureSlot_PatchID
-		m_defaultInstanceExtraResources.SetBuffer(EReservedTextureSlot_ComputeSkinVerts, CDeviceBufferManager::GetNullBufferStructured(), EDefaultResourceViews::Default, shaderStages); // shares shader slot with EReservedTextureSlot_PatchID
+		// Deliberately aliasing slots/use-cases here for visibility (e.g. EReservedTextureSlot_ComputeSkinVerts, EReservedTextureSlot_SkinExtraWeights and
+		// EReservedTextureSlot_GpuParticleStream). The resource layout will just pick the first.
+		m_defaultDrawExtraRL.SetBuffer(EReservedTextureSlot_SkinExtraWeights , CDeviceBufferManager::GetNullBufferStructured(), EDefaultResourceViews::Default, EShaderStage_Vertex);
+		m_defaultDrawExtraRL.SetBuffer(EReservedTextureSlot_ComputeSkinVerts , CDeviceBufferManager::GetNullBufferStructured(), EDefaultResourceViews::Default, EShaderStage_Vertex);
+		m_defaultDrawExtraRL.SetBuffer(EReservedTextureSlot_GpuParticleStream, CDeviceBufferManager::GetNullBufferStructured(), EDefaultResourceViews::Default, EShaderStage_Vertex);
+		m_defaultDrawExtraRL.SetBuffer(EReservedTextureSlot_AdjacencyInfo    , CDeviceBufferManager::GetNullBufferTyped()     , EDefaultResourceViews::Default, EShaderStage_Domain);
 
-		m_pDefaultInstanceExtraResourceSet = GetDeviceObjectFactory().CreateResourceSet();
-		m_pDefaultInstanceExtraResourceSet->Update(m_defaultInstanceExtraResources);
+		m_pDefaultDrawExtraRS = GetDeviceObjectFactory().CreateResourceSet();
+		m_pDefaultDrawExtraRS->Update(m_defaultDrawExtraRL);
 	}
 
 	// per view constant buffer
@@ -130,7 +133,7 @@ void CStandardGraphicsPipeline::Init()
 	RegisterStage<CClipVolumesStage           >(m_pClipVolumesStage           , eStage_ClipVolumes);
 	RegisterStage<CShadowMaskStage            >(m_pShadowMaskStage            , eStage_ShadowMask);
 	RegisterStage<CTiledShadingStage          >(m_pTiledShadingStage          , eStage_TiledShading);
-	RegisterStage<CWaterStage                 >(m_pWaterStage                 , eStage_Water);
+	RegisterStage<CWaterStage                 >(m_pWaterStage                 , eStage_Water); // Has a custom PSO cache like Forward
 	RegisterStage<CLensOpticsStage            >(m_pLensOpticsStage            , eStage_LensOptics);
 	RegisterStage<CPostEffectStage            >(m_pPostEffectStage            , eStage_PostEffet);
 	RegisterStage<CRainStage                  >(m_pRainStage                  , eStage_Rain);
@@ -147,12 +150,10 @@ void CStandardGraphicsPipeline::Init()
 	m_DownscalePass.reset(new CDownsamplePass);
 	m_UpscalePass  .reset(new CSharpeningUpsamplePass);
 
-	gRenDev->SyncComputeVerticesJobs();
-
 	// preallocate light volume buffer
 	GetLightVolumeBuffer().Create();
 	// preallocate video memory buffer for particles when using the job system
-	GetParticleBufferSet().Create(CRenderer::CV_r_ParticleVerticePoolSize);
+	GetParticleBufferSet().Create(CRenderer::CV_r_ParticleVerticePoolSize, CRenderer::CV_r_ParticleMaxVerticePoolSize);
 
 	m_bInitialized = true;
 }
@@ -177,8 +178,8 @@ void CStandardGraphicsPipeline::ShutDown()
 	CGraphicsPipeline::SetCurrentRenderView(nullptr);
 
 	m_mainViewConstantBuffer.Clear();
-	m_defaultInstanceExtraResources.ClearResources();
-	m_pDefaultInstanceExtraResourceSet.reset();
+	m_defaultDrawExtraRL.ClearResources();
+	m_pDefaultDrawExtraRS.reset();
 	m_DownscalePass.reset();
 	m_UpscalePass.reset();
 
@@ -193,6 +194,10 @@ void CStandardGraphicsPipeline::Update(CRenderView* pRenderView, EShaderRenderin
 
 	m_numInvalidDrawcalls = 0;
 	GenerateMainViewConstantBuffer();
+
+	// Compile shadow renderitems
+	if (!pRenderView->IsRecursive() && pRenderView->GetCurrentEye() != CCamera::eEye_Right)
+		pRenderView->PrepareShadowViews();
 
 	m_renderingFlags = renderingFlags;
 	CGraphicsPipeline::Update(pRenderView, renderingFlags);
@@ -502,9 +507,6 @@ bool CStandardGraphicsPipeline::FillCommonScenePassStates(const SGraphicsPipelin
 	if (psoDesc.m_RenderState & GS_ALPHATEST)
 		psoDesc.m_ShaderFlags_RT |= g_HWSR_MaskBit[HWSR_ALPHATEST];
 
-	if (renderState & OS_ENVIRONMENT_CUBEMAP)
-		psoDesc.m_ShaderFlags_RT |= g_HWSR_MaskBit[HWSR_ENVIRONMENT_CUBEMAP];
-
 #ifdef TESSELLATION_RENDERER
 	const bool bHasTesselationShaders = pShaderPass && pShaderPass->m_HShader && pShaderPass->m_DShader;
 	if (bHasTesselationShaders && (!(objectFlags & FOB_NEAREST) && (objectFlags & FOB_ALLOW_TESSELLATION)))
@@ -531,10 +533,12 @@ bool CStandardGraphicsPipeline::FillCommonScenePassStates(const SGraphicsPipelin
 CDeviceResourceLayoutPtr CStandardGraphicsPipeline::CreateScenePassLayout(const CDeviceResourceSetDesc& perPassResources)
 {
 	SDeviceResourceLayoutDesc layoutDesc;
-	layoutDesc.SetConstantBuffer(EResourceLayoutSlot_PerInstanceCB, eConstantBufferShaderSlot_PerInstance, EShaderStage_Vertex | EShaderStage_Pixel | EShaderStage_Domain);
-	layoutDesc.SetResourceSet(EResourceLayoutSlot_PerMaterialRS, GetDefaultMaterialBindPoints());
-	layoutDesc.SetResourceSet(EResourceLayoutSlot_PerInstanceExtraRS, GetDefaultInstanceExtraResources());
-	layoutDesc.SetResourceSet(EResourceLayoutSlot_PerPassRS, perPassResources);
+
+	layoutDesc.SetConstantBuffer(EResourceLayoutSlot_PerDrawCB, eConstantBufferShaderSlot_PerDraw, EShaderStage_Vertex | EShaderStage_Pixel | EShaderStage_Domain);
+	
+	layoutDesc.SetResourceSet(EResourceLayoutSlot_PerDrawExtraRS, GetDefaultDrawExtraResourceLayout());
+	layoutDesc.SetResourceSet(EResourceLayoutSlot_PerMaterialRS , GetDefaultMaterialBindPoints());
+	layoutDesc.SetResourceSet(EResourceLayoutSlot_PerPassRS     , perPassResources);
 
 	CDeviceResourceLayoutPtr pResourceLayout = GetDeviceObjectFactory().CreateResourceLayout(layoutDesc);
 	assert(pResourceLayout != nullptr);
@@ -653,7 +657,6 @@ void CStandardGraphicsPipeline::ExecuteBillboards()
 	GetGBufferStage()->Execute();
 
 	pRenderView->SwitchUsageMode(CRenderView::eUsageModeReadingDone);
-	pRenderView->Clear();
 }
 
 // TODO: This will be used only for recursive render pass after all render views get rendered with full graphics pipeline including tiled forward shading.
@@ -681,12 +684,6 @@ void CStandardGraphicsPipeline::ExecuteMinimumForwardShading()
 		m_pComputeSkinningStage->Execute();
 	}
 
-	{
-		PROFILE_FRAME(WaitForParticleRendItems);
-		pRenderer->SyncComputeVerticesJobs();
-		pRenderer->UnLockParticleVideoMemory();
-	}
-
 	// recursive pass doesn't use deferred fog, instead uses forward shader fog.
 	SetPipelineFlags(GetPipelineFlags() & ~EPipelineFlags::NO_SHADER_FOG);
 
@@ -698,11 +695,14 @@ void CStandardGraphicsPipeline::ExecuteMinimumForwardShading()
 		}
 	}
 
+	// GBuffer ZPass only
+	m_pSceneGBufferStage->ExecuteMinimumZpass();
+
 	// forward opaque and transparent passes for recursive rendering
 	m_pSceneForwardStage->ExecuteMinimum(pColorTex, pDepthTex);
 
 	// Insert fence which is used on consoles to prevent overwriting video memory
-	pRenderer->InsertParticleVideoDataFence();
+	pRenderer->InsertParticleVideoDataFence(pRenderer->GetRenderFrameID());
 
 	if (pRenderView->GetCurrentEye() == CCamera::eEye_Right ||
 		!pRenderer->GetS3DRend().IsStereoEnabled() ||
@@ -745,11 +745,6 @@ void CStandardGraphicsPipeline::ExecuteMobilePipeline()
 	else
 		m_pSceneGBufferStage->ExecuteMicroGBuffer();
 
-	if (pRenderView->GetCurrentEye() != CCamera::eEye_Right)
-	{
-		m_pShadowMapStage->Prepare();
-	}
-
 	pRenderView->GetDrawer().WaitForDrawSubmission();
 
 	// Deferred shading
@@ -758,7 +753,6 @@ void CStandardGraphicsPipeline::ExecuteMobilePipeline()
 
 		{
 			m_pClipVolumesStage->GenerateClipVolumeInfo();
-			m_pTiledLightVolumesStage->GenerateLightList();
 			m_pTiledLightVolumesStage->Execute();
 			m_pTiledShadingStage->Execute();
 		}
@@ -786,6 +780,9 @@ void CStandardGraphicsPipeline::Execute()
 	
 	m_renderPassScheduler.SetEnabled(true);
 
+	// Generate cloud volume textures for shadow mapping. Only needs view, and needs to run before ShadowMaskgen.
+	m_pVolumetricCloudsStage->ExecuteShadowGen();
+
 	if (pRenderView->GetCurrentEye() != CCamera::eEye_Right)
 	{
 		// Compute algorithms
@@ -799,20 +796,8 @@ void CStandardGraphicsPipeline::Execute()
 		m_pRainStage->ExecuteRainOcclusion();
 	}
 
-	if (!pRenderView->IsRecursive() && pRenderView->GetCurrentEye() != CCamera::eEye_Right)
-	{
-		// compile shadow renderitems. needs to happen before gbuffer pass accesses renderitems
-		pRenderView->PrepareShadowViews();
-	}
-
 	// GBuffer
 	m_pSceneGBufferStage->Execute();
-
-	if (pRenderView->GetCurrentEye() != CCamera::eEye_Right)
-	{
-		// NOTE: only compute and copy workloads are allowed to overlap multi-threaded drawing
-		m_pShadowMapStage->Prepare();
-	}
 
 	// Wait for GBuffer draw jobs to finish
 	renderItemDrawer.WaitForDrawSubmission();
@@ -890,6 +875,11 @@ void CStandardGraphicsPipeline::Execute()
 		m_pScreenSpaceObscuranceStage->Execute();
 	}
 
+	if (CRenderer::CV_r_DeferredShadingTiled > 1)
+	{
+		m_pTiledLightVolumesStage->Execute();
+	}
+
 	// Water volume caustics
 	m_pWaterStage->ExecuteWaterVolumeCaustics();
 
@@ -908,8 +898,6 @@ void CStandardGraphicsPipeline::Execute()
 			m_pShadowMaskStage->Prepare();
 			m_pShadowMaskStage->Execute();
 			
-			m_pTiledLightVolumesStage->GenerateLightList();
-			m_pTiledLightVolumesStage->Execute();
 			m_pTiledShadingStage->Execute();
 
 			if (CRenderer::CV_r_DeferredShadingSSS)
@@ -917,12 +905,6 @@ void CStandardGraphicsPipeline::Execute()
 				m_pScreenSpaceSSSStage->Execute(CRendererResources::s_ptexSceneTargetR11G11B10F[0]);
 			}
 		}
-	}
-
-	{
-		PROFILE_FRAME(WaitForParticleRendItems);
-		pRenderer->SyncComputeVerticesJobs();
-		pRenderer->UnLockParticleVideoMemory();
 	}
 
 	// Opaque forward passes
@@ -958,7 +940,7 @@ void CStandardGraphicsPipeline::Execute()
 	}
 
 	// Insert fence which is used on consoles to prevent overwriting video memory
-	pRenderer->InsertParticleVideoDataFence();
+	pRenderer->InsertParticleVideoDataFence(pRenderer->GetRenderFrameID());
 
 	m_pSnowStage->ExecuteDeferredSnowDisplacement();
 

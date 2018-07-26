@@ -22,6 +22,8 @@
 
 #include <DriverD3D.h>
 
+#include <cstring>
+
 #include "RenderView.h"
 
 #ifdef STRIP_RENDER_THREAD
@@ -366,10 +368,10 @@ void SRenderThread::RC_PrecacheResource(ITexture* pTP, float fMipFactor, float f
 	}
 
 	_smart_ptr<ITexture> pRefTexture = pTP;
-	ExecuteRenderThreadCommand(
-		[=]{ gRenDev->PrecacheTexture(pRefTexture, fMipFactor, fTimeToReady, Flags, nUpdateId, nCounter); },
-		ERenderCommandFlags::LevelLoadingThread_defer
-	);
+	ExecuteRenderThreadCommand([=]
+	{
+		RC_PrecacheResource(pRefTexture.get(), fMipFactor, fTimeToReady, Flags, nUpdateId, nCounter);
+	}, ERenderCommandFlags::LevelLoadingThread_defer);
 }
 
 void SRenderThread::RC_TryFlush()
@@ -388,37 +390,47 @@ void SRenderThread::RC_TryFlush()
 	SyncMainWithRender();
 }
 
-void SRenderThread::RC_FlashRenderPlayer(IFlashPlayer* pPlayer)
+void SRenderThread::RC_FlashRenderPlayer(std::shared_ptr<IFlashPlayer> &&pPlayer)
 {
 	assert(IsRenderThread());
-	gRenDev->RT_FlashRenderInternal(pPlayer);
+	gRenDev->RT_FlashRenderInternal(std::move(pPlayer));
 }
 
-void SRenderThread::RC_FlashRender(IFlashPlayer_RenderProxy* pPlayer)
+void SRenderThread::RC_FlashRender(std::shared_ptr<IFlashPlayer_RenderProxy> &&pPlayer)
 {
 	if (IsRenderThread())
 	{
-		gRenDev->RT_FlashRenderInternal(pPlayer, true);
+		gRenDev->RT_FlashRenderInternal(std::move(pPlayer), true);
 		return;
 	}
 
 	LOADINGLOCK_COMMANDQUEUE
-	byte* p = AddCommand(eRC_FlashRender, sizeof(void*));
-	AddPointer(p, pPlayer);
+	byte* p = AddCommand(eRC_FlashRender, sizeof(std::shared_ptr<IFlashPlayer_RenderProxy>));
+
+	// Write the shared_ptr without releasing a reference.
+	StoreUnaligned<std::shared_ptr<IFlashPlayer_RenderProxy>>(p, pPlayer);
+	p += sizeof(std::shared_ptr<IFlashPlayer_RenderProxy>);
+	std::memset(&pPlayer, 0, sizeof(std::shared_ptr<IFlashPlayer_RenderProxy>));
+
 	EndCommand(p);
 }
 
-void SRenderThread::RC_FlashRenderPlaybackLockless(IFlashPlayer_RenderProxy* pPlayer, int cbIdx, bool finalPlayback)
+void SRenderThread::RC_FlashRenderPlaybackLockless(std::shared_ptr<IFlashPlayer_RenderProxy> &&pPlayer, int cbIdx, bool finalPlayback)
 {
 	if (IsRenderThread())
 	{
-		gRenDev->RT_FlashRenderPlaybackLocklessInternal(pPlayer, cbIdx, finalPlayback, true);
+		gRenDev->RT_FlashRenderPlaybackLocklessInternal(std::move(pPlayer), cbIdx, finalPlayback, true);
 		return;
 	}
 
 	LOADINGLOCK_COMMANDQUEUE
-	byte* p = AddCommand(eRC_FlashRenderLockless, 12 + sizeof(void*));
-	AddPointer(p, pPlayer);
+	byte* p = AddCommand(eRC_FlashRenderLockless, 12 + sizeof(std::shared_ptr<IFlashPlayer_RenderProxy>));
+
+	// Write the shared_ptr without releasing a reference.
+	StoreUnaligned<std::shared_ptr<IFlashPlayer_RenderProxy>>(p, pPlayer);
+	p += sizeof(std::shared_ptr<IFlashPlayer_RenderProxy>);
+	std::memset(&pPlayer, 0, sizeof(std::shared_ptr<IFlashPlayer_RenderProxy>));
+
 	AddDWORD(p, (uint32) cbIdx);
 	AddDWORD(p, finalPlayback ? 1 : 0);
 	EndCommand(p);
@@ -456,9 +468,6 @@ void SRenderThread::RC_StopVideoThread()
 #pragma warning(disable : 4800)
 void SRenderThread::ProcessCommands()
 {
-	CRY_PROFILE_REGION(PROFILE_RENDERER, "SRenderThread::ProcessCommands");
-	CRYPROFILE_SCOPE_PROFILE_MARKER("SRenderThread::ProcessCommands");
-
 #ifndef STRIP_RENDER_THREAD
 	assert(IsRenderThread());
 	if (!CheckFlushCond())
@@ -510,42 +519,57 @@ void SRenderThread::ProcessCommands()
 		switch (nC)
 		{
 		case eRC_CreateDevice:
+		{
+			CRY_PROFILE_REGION(PROFILE_RENDERER, "SRenderThread: eRC_CreateDevice");
 			m_bSuccessful &= gRenDev->RT_CreateDevice();
+		}
 			break;
 		case eRC_ResetDevice:
+		{
+			CRY_PROFILE_REGION(PROFILE_RENDERER, "SRenderThread: eRC_ResetDevice");
 			if (m_eVideoThreadMode == eVTM_Disabled)
 				gRenDev->RT_Reset();
+		}
 			break;
 	#if CRY_PLATFORM_DURANGO
 		case eRC_SuspendDevice:
+		{
+			CRY_PROFILE_REGION(PROFILE_RENDERER, "SRenderThread: eRC_SuspendDevice");
 			if (m_eVideoThreadMode == eVTM_Disabled)
 				gRenDev->RT_SuspendDevice();
+		}
 			break;
 		case eRC_ResumeDevice:
+		{
+			CRY_PROFILE_REGION(PROFILE_RENDERER, "SRenderThread: eRC_ResumeDevice");
 			if (m_eVideoThreadMode == eVTM_Disabled)
 			{
 				gRenDev->RT_ResumeDevice();
 				//Now we really want to resume the device
 				bSuspendDevice = false;
 			}
+		}
 			break;
 	#endif
 
 		case eRC_BeginFrame:
+		{
+			CRY_PROFILE_REGION(PROFILE_RENDERER, "SRenderThread: eRC_BeginFrame");
+			m_displayContextKey = ReadCommand<SDisplayContextKey>(n);
+			if (m_eVideoThreadMode == eVTM_Disabled)
 			{
-				m_displayContextKey = ReadCommand<SDisplayContextKey>(n);
-				if (m_eVideoThreadMode == eVTM_Disabled)
-				{
-					gRenDev->RT_BeginFrame(m_displayContextKey);
-					m_bBeginFrameCalled = false;
-				}
-				else
-				{
-					m_bBeginFrameCalled = true;
-				}
+				gRenDev->RT_BeginFrame(m_displayContextKey);
+				m_bBeginFrameCalled = false;
 			}
+			else
+			{
+				m_bBeginFrameCalled = true;
+			}
+		}
 			break;
 		case eRC_EndFrame:
+		{
+			CRY_PROFILE_REGION(PROFILE_RENDERER, "SRenderThread: eRC_EndFrame");
 			if (m_eVideoThreadMode == eVTM_Disabled)
 			{
 				gRenDev->RT_EndFrame();
@@ -561,36 +585,39 @@ void SRenderThread::ProcessCommands()
 				m_bEndFrameCalled = true;
 				gRenDev->m_nFrameSwapID++;
 			}
+		}
 			break;
 
 		case eRC_FlashRender:
 			{
 				START_PROFILE_RT;
-				IFlashPlayer_RenderProxy* pPlayer = ReadCommand<IFlashPlayer_RenderProxy*>(n);
-				gRenDev->RT_FlashRenderInternal(pPlayer, m_eVideoThreadMode == eVTM_Disabled);
+				std::shared_ptr<IFlashPlayer_RenderProxy> pPlayer = ReadCommand<std::shared_ptr<IFlashPlayer_RenderProxy>>(n);
+				gRenDev->RT_FlashRenderInternal(std::move(pPlayer), m_eVideoThreadMode == eVTM_Disabled);
 				END_PROFILE_PLUS_RT(gRenDev->m_fRTTimeFlashRender);
 			}
 			break;
 		case eRC_FlashRenderLockless:
-		{
-			IFlashPlayer_RenderProxy* pPlayer = ReadCommand<IFlashPlayer_RenderProxy*>(n);
-			int cbIdx = ReadCommand<int>(n);
-			bool finalPlayback = ReadCommand<int>(n) != 0;
-			gRenDev->RT_FlashRenderPlaybackLocklessInternal(pPlayer, cbIdx, finalPlayback, m_eVideoThreadMode == eVTM_Disabled);
-		}
-		break;
+			{
+				std::shared_ptr<IFlashPlayer_RenderProxy> pPlayer = ReadCommand<std::shared_ptr<IFlashPlayer_RenderProxy>>(n);
+				int cbIdx = ReadCommand<int>(n);
+				bool finalPlayback = ReadCommand<int>(n) != 0;
+				gRenDev->RT_FlashRenderPlaybackLocklessInternal(std::move(pPlayer), cbIdx, finalPlayback, m_eVideoThreadMode == eVTM_Disabled);
+			}
+			break;
 
 		case eRC_LambdaCall:
+		{
+			CRY_PROFILE_REGION(PROFILE_RENDERER, "SRenderThread: eRC_LambdaCall");
+			SRenderThreadLambdaCallback* pRTCallback = ReadCommand<SRenderThreadLambdaCallback*>(n);
+			bool bSkipCommand = (m_eVideoThreadMode != eVTM_Disabled) && (uint32(pRTCallback->flags & ERenderCommandFlags::SkipDuringLoading) != 0);
+			// Execute lambda callback on a render thread
+			if (!bSkipCommand)
 			{
-				SRenderThreadLambdaCallback* pRTCallback = ReadCommand<SRenderThreadLambdaCallback*>(n);
-				bool bSkipCommand = (m_eVideoThreadMode != eVTM_Disabled)	&& (uint32(pRTCallback->flags & ERenderCommandFlags::SkipDuringLoading) != 0);
-				// Execute lambda callback on a render thread
-				if (!bSkipCommand)
-				{
-					pRTCallback->callback();
-				}
-				m_lambdaCallbacksPool.Delete(pRTCallback);
+				pRTCallback->callback();
 			}
+
+			m_lambdaCallbacksPool.Delete(pRTCallback);
+		}
 			break;
 
 		default:

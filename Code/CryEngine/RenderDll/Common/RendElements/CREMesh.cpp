@@ -23,7 +23,7 @@ void CREMeshImpl::mfCenter(Vec3& Pos, CRenderObject* pObj, const SRenderingPassI
 		Pos += pObj->GetMatrix(passInfo).GetTranslation();
 }
 
-void CREMeshImpl::mfGetBBox(Vec3& vMins, Vec3& vMaxs)
+void CREMeshImpl::mfGetBBox(Vec3& vMins, Vec3& vMaxs) const
 {
 	vMins = m_pRenderMesh->_GetVertexContainer()->m_vBoxMin;
 	vMaxs = m_pRenderMesh->_GetVertexContainer()->m_vBoxMax;
@@ -57,9 +57,8 @@ bool CREMeshImpl::mfUpdate(InputLayoutHandle eVertFormat, int Flags, bool bTesse
 	CRenderer* rd = gRenDev;
 	const int threadId = gRenDev->GetRenderThreadID();
 
-	bool bSucceed = true;
-
-	CRenderMesh* pVContainer = m_pRenderMesh->_GetVertexContainer();
+	// If no updates are pending it counts as having successfully "processed" them
+	bool bPendingUpdatesSucceeded = true;
 
 	m_pRenderMesh->m_nFlags &= ~FRM_SKINNEDNEXTDRAW;
 
@@ -67,20 +66,18 @@ bool CREMeshImpl::mfUpdate(InputLayoutHandle eVertFormat, int Flags, bool bTesse
 	{
 		m_pRenderMesh->SyncAsyncUpdate(gRenDev->GetRenderThreadID());
 
-		bSucceed = m_pRenderMesh->RT_CheckUpdate(pVContainer, eVertFormat, Flags | VSM_MASK, bTessellation);
-		if (bSucceed)
+		bPendingUpdatesSucceeded = m_pRenderMesh->RT_CheckUpdate(m_pRenderMesh->_GetVertexContainer(), eVertFormat, Flags | VSM_MASK, bTessellation);
+		if (bPendingUpdatesSucceeded)
 		{
 			AUTO_LOCK(CRenderMesh::m_sLinkLock);
 			m_pRenderMesh->m_Modified[threadId].erase();
 		}
 	}
 
-	if (!bSucceed || !pVContainer->_HasVBStream(VSF_GENERAL))
+	if (!bPendingUpdatesSucceeded)
 		return false;
 
 	m_Flags &= ~FCEF_DIRTY;
-
-	//int nFrameId = gEnv->pRenderer->GetFrameID(false); { char buf[1024]; cry_sprintf(buf, "    RE: %p : frame(%d) Clear FCEF_DIRTY\r\n", this, nFrameId); OutputDebugString(buf); }
 
 	return true;
 }
@@ -156,11 +153,6 @@ bool CREMeshImpl::GetGeometryInfo(SGeometryInfo& geomInfo, bool bSupportTessella
 
 	CRenderMesh* pVContainer = m_pRenderMesh->_GetVertexContainer();
 
-	/* TheoM: This check breaks merged meshes: The streams are only finalized in mfUpdate, inside DrawBatch
-	   if (!pVContainer->_HasVBStream(VSF_GENERAL))
-	    return false;
-	 */
-
 	geomInfo.nFirstIndex = m_nFirstIndexId;
 	geomInfo.nFirstVertex = m_nFirstVertId;
 	geomInfo.nNumVertices = m_nNumVerts;
@@ -169,22 +161,9 @@ bool CREMeshImpl::GetGeometryInfo(SGeometryInfo& geomInfo, bool bSupportTessella
 	geomInfo.eVertFormat = pVContainer->_GetVertexFormat();
 	geomInfo.primitiveType = pVContainer->_GetPrimitiveType();
 
-	{
-		// Check if needs updating.
-		//TODO Fix constant | 0x80000000
-		uint32 streamMask = 0;
-		uint16 nFrameId = gRenDev->GetRenderFrameID();
-		if (!mfCheckUpdate(geomInfo.eVertFormat, (uint32)streamMask | 0x80000000, (uint16)nFrameId, bSupportTessellation))
-		{
-			// Force initial update on fail
-			m_pRenderMesh->SyncAsyncUpdate(gRenDev->GetRenderThreadID());
-			if (!m_pRenderMesh->RT_CheckUpdate(pVContainer, geomInfo.eVertFormat, (uint32)streamMask | 0x80000000, bSupportTessellation, true))
-				return false;
-			m_Flags &= ~FCEF_DIRTY;
-
-			//int nFrameId = gEnv->pRenderer->GetFrameID(false); { char buf[1024]; cry_sprintf(buf, "    RE: %p : frame(%d) Clear2 FCEF_DIRTY\r\n", this, nFrameId); OutputDebugString(buf); }
-		}
-	}
+	// Test if any pending updates have to be processed (and process them)
+	if (!mfCheckUpdate(geomInfo.eVertFormat, VSM_MASK, (uint16)gRenDev->GetRenderFrameID(), bSupportTessellation))
+		return false;
 
 	if (!m_pRenderMesh->FillGeometryInfo(geomInfo))
 		return false;
@@ -192,7 +171,7 @@ bool CREMeshImpl::GetGeometryInfo(SGeometryInfo& geomInfo, bool bSupportTessella
 	return true;
 }
 
-void CREMeshImpl::DrawToCommandList(CRenderObject* pObj, const SGraphicsPipelinePassContext& ctx)
+void CREMeshImpl::DrawToCommandList(CRenderObject* pObj, const SGraphicsPipelinePassContext& ctx, CDeviceCommandList* commandList)
 {
 	//@TODO: implement
 

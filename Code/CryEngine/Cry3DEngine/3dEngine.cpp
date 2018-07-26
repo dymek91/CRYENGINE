@@ -427,6 +427,8 @@ C3DEngine::C3DEngine(ISystem* pSystem)
 	m_pLevelStatObjTable = NULL;
 	m_pLevelMaterialsTable = NULL;
 	m_bLevelFilesEndian = false;
+
+	ClearPrecacheInfo();
 }
 
 //////////////////////////////////////////////////////////////////////
@@ -776,8 +778,7 @@ void C3DEngine::ProcessCVarsChange()
 	  GetCVars()->e_Portals +
 	  GetCVars()->e_DebugDraw +
 	  GetFloatCVar(e_ViewDistCompMaxSize) +
-	  GetCVars()->e_DecalsDeferredStatic +
-	  (GetRenderer() ? GetRenderer()->GetWidth() : 0);
+	  GetCVars()->e_DecalsDeferredStatic;
 
 	if (m_fRefreshSceneDataCVarsSumm != -1 && m_fRefreshSceneDataCVarsSumm != fNewCVarsSumm)
 	{
@@ -2855,17 +2856,20 @@ void C3DEngine::UpdateVisArea(IVisArea* pVisArea, const Vec3* pPoints, int nCoun
 
 IClipVolume* C3DEngine::CreateClipVolume()
 {
+	MarkRNTmpDataPoolForReset();
 	return m_pClipVolumeManager->CreateClipVolume();
 }
 
 void C3DEngine::DeleteClipVolume(IClipVolume* pClipVolume)
 {
+	MarkRNTmpDataPoolForReset();
 	m_pClipVolumeManager->DeleteClipVolume(pClipVolume);
 }
 
-void C3DEngine::UpdateClipVolume(IClipVolume* pClipVolume, _smart_ptr<IRenderMesh> pRenderMesh, IBSPTree3D* pBspTree, const Matrix34& worldTM, bool bActive, uint32 flags, const char* szName)
+void C3DEngine::UpdateClipVolume(IClipVolume* pClipVolume, _smart_ptr<IRenderMesh> pRenderMesh, IBSPTree3D* pBspTree, const Matrix34& worldTM, uint8 viewDistRatio, bool bActive, uint32 flags, const char* szName)
 {
-	m_pClipVolumeManager->UpdateClipVolume(pClipVolume, pRenderMesh, pBspTree, worldTM, bActive, flags, szName);
+	MarkRNTmpDataPoolForReset();
+	m_pClipVolumeManager->UpdateClipVolume(pClipVolume, pRenderMesh, pBspTree, worldTM, viewDistRatio, bActive, flags, szName);
 }
 
 void C3DEngine::ResetParticlesAndDecals()
@@ -2980,11 +2984,21 @@ IRenderNode* C3DEngine::CreateRenderNode(EERType type)
 void C3DEngine::DeleteRenderNode(IRenderNode* pRenderNode)
 {
 	LOADING_TIME_PROFILE_SECTION;
-	pRenderNode->SetRndFlags(ERF_PENDING_DELETE, true);
 
 	UnRegisterEntityDirect(pRenderNode);
 
-	m_renderNodesToDelete[m_renderNodesToDeleteID].push_back(pRenderNode);
+	// No need to defer rendernode deletion on unload and shutdown as the renderthread
+	// has already finished all rendering tasks at this point.
+	if (m_bInUnload || m_bInShutDown)
+	{
+		CRY_ASSERT((pRenderNode->GetRndFlags() & ERF_PENDING_DELETE) == 0);
+		pRenderNode->ReleaseNode(true);
+	}
+	else
+	{	
+		pRenderNode->SetRndFlags(ERF_PENDING_DELETE, true);
+		m_renderNodesToDelete[m_renderNodesToDeleteID].push_back(pRenderNode);
+	}
 }
 
 void C3DEngine::TickDelayedRenderNodeDeletion()
@@ -6649,10 +6663,8 @@ bool C3DEngine::UnRegisterEntityImpl(IRenderNode* pEnt)
 		}
 	}
 
-	if (CClipVolumeManager* pClipVolumeManager = GetClipVolumeManager())
-	{
-		pClipVolumeManager->UnregisterRenderNode(pEnt);
-	}
+	if (auto pTempData = pEnt->m_pTempData.load())
+		pTempData->ResetClipVolume();
 
 	if (m_bIntegrateObjectsIntoTerrain && eRenderNodeType == eERType_MovableBrush && pEnt->GetGIMode() == IRenderNode::eGM_IntegrateIntoTerrain)
 	{

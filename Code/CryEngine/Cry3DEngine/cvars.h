@@ -155,15 +155,15 @@ struct CVars : public Cry3DEngineBase
 	DeclareConstIntCVar(e_FogVolumes, 1);
 	int    e_VolumetricFog;
 	DeclareConstIntCVar(e_Render, e_RenderDefault);
-	DeclareConstIntCVar(e_Tessellation, 1);
+	int    e_Tessellation;
 	float  e_TessellationMaxDistance;
-	DeclareConstIntCVar(e_ShadowsTessellateCascades, 1);
+	int    e_ShadowsTessellateCascades;
 	DeclareConstIntCVar(e_ShadowsTessellateDLights, 0);
 	int    e_CoverageBufferReproj;
 	int    e_CoverageBufferRastPolyLimit;
 	int    e_CoverageBufferShowOccluder;
-	DeclareConstFloatCVar(e_ViewDistRatioPortals);
-	DeclareConstIntCVar(e_ParticlesLights, 1);
+	float  e_ViewDistRatioPortals;
+	int    e_ParticlesLights;
 	DeclareConstIntCVar(e_ObjFastRegister, 1);
 	float  e_ViewDistRatioLights;
 	float  e_LightIlluminanceThreshold;
@@ -171,6 +171,7 @@ struct CVars : public Cry3DEngineBase
 	ICVar* e_DebugDrawFilter;
 	DeclareConstIntCVar(e_DebugDrawListSize, 16);
 	DeclareConstIntCVar(e_DebugDrawListBBoxIndex, 0);
+	float e_DebugDrawMaxDistance;
 #if !defined(_RELEASE)
 	const char* e_pStatObjRenderFilterStr;
 	int         e_statObjRenderFilterMode;
@@ -186,7 +187,7 @@ struct CVars : public Cry3DEngineBase
 	int   e_DecalsMaxTrisInObject;
 	DeclareConstFloatCVar(e_OcclusionVolumesViewDistRatio);
 	DeclareConstFloatCVar(e_SunAngleSnapDot);
-	DeclareConstIntCVar(e_PreloadDecals, 1);
+	int   e_PreloadDecals;
 	float e_DecalsLifeTimeScale;
 	int   e_DecalsForceDeferred;
 	DeclareConstIntCVar(e_CoverageBufferDebugFreeze, 0);
@@ -205,7 +206,7 @@ struct CVars : public Cry3DEngineBase
 	DeclareConstIntCVar(e_DynamicLights, 1);
 	int    e_DynamicLightsFrameIdVisTest;
 	DeclareConstIntCVar(e_WaterWavesTessellationAmount, 5);
-	DeclareConstIntCVar(e_ShadowsLodBiasInvis, 0);
+	int    e_ShadowsLodBiasInvis;
 	float  e_CoverageBufferBias;
 	int    e_DynamicLightsMaxEntityLights;
 	int    e_SQTestMoveSpeed;
@@ -214,7 +215,7 @@ struct CVars : public Cry3DEngineBase
 	int    e_StaticInstancing;
 	int    e_StaticInstancingMinInstNum;
 	int    e_RNTmpDataPoolMaxFrames;
-	DeclareConstIntCVar(e_DynamicLightsMaxCount, 512);
+	int    e_DynamicLightsMaxCount;
 	DeclareConstIntCVar(e_DebugLights, 0);
 	int    e_StreamCgfPoolSize;
 	DeclareConstIntCVar(e_StatObjPreload, 1);
@@ -248,7 +249,7 @@ struct CVars : public Cry3DEngineBase
 	DeclareConstIntCVar(e_StreamCgfUpdatePerNodeDistance, 1);
 	DeclareConstFloatCVar(e_DecalsDeferredDynamicDepthScale);
 	DeclareConstIntCVar(e_TerrainBBoxes, 0);
-	DeclareConstIntCVar(e_LightVolumes, e_LightVolumesDefault);
+	int e_LightVolumes;
 	DeclareConstIntCVar(e_LightVolumesDebug, 0);
 	DeclareConstIntCVar(e_Portals, 1);
 	DeclareConstIntCVar(e_PortalsBlend, 1);
@@ -269,13 +270,13 @@ struct CVars : public Cry3DEngineBase
 	DeclareConstIntCVar(e_WaterVolumes, e_WaterVolumesDefault);
 	DeclareConstFloatCVar(e_TerrainOcclusionCullingPrecisionDistRatio);
 	float e_ScreenShotMapCamHeight;
-	DeclareConstIntCVar(e_DeformableObjects, e_DeformableObjectsDefault);
+	int   e_DeformableObjects;
 	DeclareConstFloatCVar(e_StreamCgfFastUpdateMaxDistance);
 	DeclareConstIntCVar(e_DecalsClip, 1);
 	ICVar* e_ScreenShotFileFormat;
 	int    e_CharLodMin;
 	float  e_PhysOceanCell;
-	DeclareConstIntCVar(e_WindAreas, 1);
+	int    e_WindAreas;
 	DeclareConstFloatCVar(e_WindBendingDistRatio);
 	float  e_WindBendingStrength;
 	float  e_WindBendingAreaStrength;
@@ -297,7 +298,7 @@ struct CVars : public Cry3DEngineBase
 	DeclareConstFloatCVar(e_StreamPredictionMinReportDistance);
 	int   e_WaterTessellationSwathWidth;
 	DeclareConstIntCVar(e_StreamSaveStartupResultsIntoXML, 0);
-	DeclareConstIntCVar(e_PhysFoliage, 2);
+	int   e_PhysFoliage;
 	DeclareConstIntCVar(e_RenderMeshUpdateAsync, 1);
 	int   e_ParticlesPreload;
 	int   e_ParticlesAllowRuntimeLoad;
@@ -307,6 +308,7 @@ struct CVars : public Cry3DEngineBase
 	int   e_DecalsDeferredDynamic;
 	DeclareConstIntCVar(e_DefaultMaterial, 0);
 	int   e_LodMin;
+	int   e_RenderMeshCollisionLod;
 	DeclareConstIntCVar(e_PreloadMaterials, 1);
 	DeclareConstIntCVar(e_ObjStats, 0);
 	DeclareConstIntCVar(e_TerrainDeformations, 0);
@@ -316,7 +318,7 @@ struct CVars : public Cry3DEngineBase
 	int   e_TerrainEditPostponeTexturesUpdate;
 	int   e_DecalsDeferredStatic;
 	DeclareConstIntCVar(e_Roads, 1);
-	DeclareConstFloatCVar(e_TerrainDetailMaterialsViewDistXY);
+	float e_TerrainDetailMaterialsViewDistXY;
 	int   e_ParticlesQuality;
 	DeclareConstIntCVar(e_DebugDrawShowOnlyCompound, 0);
 	DeclareConstFloatCVar(e_SunAngleSnapSec);
@@ -341,10 +343,9 @@ struct CVars : public Cry3DEngineBase
 	DeclareConstIntCVar(e_PrepareDeformableObjectsAtLoadTime, 0);
 	DeclareConstIntCVar(e_3dEngineTempPoolSize, 1024);
 	DeclareConstFloatCVar(e_MaxViewDistFullDistCamHeight);
-	DeclareConstIntCVar(e_VegetationBending, 2);
+	int   e_VegetationBending;
 	DeclareConstFloatCVar(e_StreamPredictionAheadDebug);
 	float e_ShadowsSlopeBias;
-	float e_ShadowsSlopeBiasHQ;
 	float e_ShadowsAutoBias;
 	DeclareConstIntCVar(e_GsmDepthBoundsDebug, 0);
 	DeclareConstIntCVar(e_TimeOfDayDebug, 0);
@@ -355,7 +356,7 @@ struct CVars : public Cry3DEngineBase
 	DeclareConstFloatCVar(e_FoliageBranchesDamping);
 	int   e_levelStartupFrameNum;
 	DeclareConstIntCVar(e_DecalsPreCreate, 1);
-	DeclareConstFloatCVar(e_ParticlesLightsViewDistRatio);
+	float e_ParticlesLightsViewDistRatio;
 	int   e_Brushes;
 	int   e_SQTestCount;
 	float e_GsmRange;
@@ -385,11 +386,11 @@ struct CVars : public Cry3DEngineBase
 	float e_ScreenShotMapSizeX;
 	int	e_ScreenShotMapResolution;
 	float e_OcclusionCullingViewDistRatio;
-	DeclareConstIntCVar(e_WaterOceanBottom, 1);
+	int   e_WaterOceanBottom;
 	DeclareConstIntCVar(e_WaterRipplesDebug, 0);
 	int   e_OnDemandPhysics;
 	float e_ShadowsResScale;
-	DeclareConstIntCVar(e_Recursion, 1);
+	int   e_Recursion;
 	DeclareConstIntCVar(e_StatObjValidate, e_StatObjValidateDefault);
 	DeclareConstIntCVar(e_DecalsMaxValidFrames, 600);
 	DeclareConstIntCVar(e_DecalsMerge, 0);
@@ -398,7 +399,7 @@ struct CVars : public Cry3DEngineBase
 	float e_ViewDistMin;
 	float e_StreamAutoMipFactorMin;
 	DeclareConstIntCVar(e_LodMinTtris, 300);
-	DeclareConstIntCVar(e_SkyQuality, 1);
+	int   e_SkyQuality;
 	DeclareConstIntCVar(e_ScissorDebug, 0);
 	DeclareConstIntCVar(e_StatObjMergeMaxTrisPerDrawCall, 500);
 	DeclareConstIntCVar(e_DynamicLightsConsistentSortOrder, 1);
@@ -412,7 +413,6 @@ struct CVars : public Cry3DEngineBase
 	int   e_CoverageBufferCullIndividualBrushesMaxNodeSize;
 	DeclareConstFloatCVar(e_TerrainOcclusionCullingPrecision);
 	float e_RenderMeshCollisionTolerance;
-	DeclareConstIntCVar(e_ShadowsMasksLimit, 0);
 	int   e_ShadowsCacheUpdate;
 	int   e_ShadowsCacheExtendLastCascade;
 	int   e_ShadowsCacheMaxNodesPerFrame;
@@ -432,18 +432,17 @@ struct CVars : public Cry3DEngineBase
 	int   e_WaterTessellationAmountX;
 	int   e_ScreenShotMinSlices;
 	int   e_DecalsMaxUpdatesPerFrame;
-	DeclareConstIntCVar(e_SkyType, 1);
+	int   e_SkyType;
 	int   e_GsmLodsNum;
 	DeclareConstIntCVar(e_AutoPrecacheCgf, 1);
 	DeclareConstIntCVar(e_HwOcclusionCullingWater, 1);
 	DeclareConstIntCVar(e_DeferredPhysicsEvents, 1);
 	float e_ParticlesMinDrawAlpha;
-	DeclareConstFloatCVar(e_ShadowsCastViewDistRatioLights);
+	float e_ShadowsCastViewDistRatioLights;
 	int   e_ShadowsUpdateViewDistRatio;
-	DeclareConstIntCVar(e_Lods, 1);
+	int   e_Lods;
 	DeclareConstIntCVar(e_LodFaceArea, 1);
 	float e_ShadowsConstBias;
-	float e_ShadowsConstBiasHQ;
 	int   e_ParticlesObjectCollisions;
 	int   e_ParticlesMinPhysicsDynamicBounds;
 	int   e_ParticlesSortQuality;
@@ -451,8 +450,8 @@ struct CVars : public Cry3DEngineBase
 	int   e_ShadowsPoolSize;
 	int   e_ShadowsMaxTexRes;
 	int   e_Sun;
-	DeclareConstFloatCVar(e_DecalsRange);
 	DeclareConstFloatCVar(e_MinMassDistanceCheckRenderMeshCollision);
+	float e_DecalsRange;
 	float e_ScreenShotMapCenterY;
 	int   e_CacheNearestCubePicking;
 	DeclareConstIntCVar(e_CoverCgfDebug, 0);
@@ -462,7 +461,7 @@ struct CVars : public Cry3DEngineBase
 	DeclareConstIntCVar(e_TerrainDetailMaterialsDebug, 0);
 	DeclareConstIntCVar(e_Sleep, 0);
 	DeclareConstIntCVar(e_TerrainOcclusionCullingStepSize, 4);
-	DeclareConstIntCVar(e_Wind, 1);
+	int   e_Wind;
 	int   e_SQTestMip;
 	int   e_Shadows;
 	int   e_ShadowsBlendCascades;
@@ -477,13 +476,14 @@ struct CVars : public Cry3DEngineBase
 	DeclareConstIntCVar(e_StatObjStoreMesh, 0);
 	ICVar* e_StreamCgfDebugFilter;
 	float  e_VegetationSpritesMinDistance;
-	DeclareConstFloatCVar(e_TerrainDetailMaterialsViewDistZ);
+	float  e_TerrainDetailMaterialsViewDistZ;
 	DeclareConstFloatCVar(e_VolObjShadowStrength);
 	DeclareConstIntCVar(e_ParticlesDebug, 0);
 	DeclareConstIntCVar(e_WaterOcean, e_WaterOceanDefault);
-	float  e_ViewDistRatio;
-	float  e_ViewDistRatioVegetation;
-	float  e_ViewDistRatioModifierGameDecals;
+	float e_ViewDistRatio;
+	float e_ViewDistRatioVegetation;
+	ICVar* e_AutoViewDistRatio;
+	float e_ViewDistRatioModifierGameDecals;
 	DeclareConstIntCVar(e_ObjectLayersActivationPhysics, 1);
 	DeclareConstIntCVar(e_StreamCgfDebugHeatMap, 0);
 	DeclareConstFloatCVar(e_StreamPredictionDistanceFar);
@@ -497,6 +497,7 @@ struct CVars : public Cry3DEngineBase
 	float e_DecalsSpawnDistRatio;
 	int   e_CGFMaxFileSize;
 	int   e_MaxDrawCalls;
+	int   e_ClipVolumes;
 #if !defined(_RELEASE)
 	int   e_MergedMeshesClusterVisualization;
 	int   e_MergedMeshesClusterVisualizationDimension;

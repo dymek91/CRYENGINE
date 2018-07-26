@@ -53,9 +53,9 @@ typedef uintptr_t stream_handle_t;
 
 struct SStreamInfo
 {
-	stream_handle_t hStream;
-	uint32          nStride; // NOTE: for index buffers this needs to contain the index format
-	uint32          nSlot;
+	stream_handle_t hStream = ~0u;
+	uint32          nStride =  0u; // NOTE: for index buffers this needs to contain the index format
+	uint32          nSlot   =  0u;
 };
 
 
@@ -72,7 +72,7 @@ public:
 	virtual bool               mfIsHWSkinned() = 0;
 	virtual CRenderElement*      mfCopyConstruct(void) = 0;
 	virtual void               mfCenter(Vec3& centr, CRenderObject* pObj, const SRenderingPassInfo& passInfo) = 0;
-	virtual void               mfGetBBox(Vec3& vMins, Vec3& vMaxs) = 0;
+	virtual void               mfGetBBox(Vec3& vMins, Vec3& vMaxs) const = 0;
 
 	virtual bool  mfUpdate(InputLayoutHandle eVertFormat, int Flags, bool bTessellation = false) = 0;
 
@@ -92,7 +92,7 @@ public:
 
 	//! Custom Drawing for the non mesh render elements.
 	//! Must be thread safe for the parallel recording
-	virtual void          DrawToCommandList(CRenderObject* pObj, const struct SGraphicsPipelinePassContext& ctx) = 0;
+	virtual void          DrawToCommandList(CRenderObject* pObj, const struct SGraphicsPipelinePassContext& ctx, class CDeviceCommandList* commandList) = 0;
 
 	//////////////////////////////////////////////////////////////////////////
 	// ~Pipeline 2.0 methods.
@@ -128,24 +128,24 @@ public:
 public:
 	struct SGeometryInfo
 	{
-		uint32        bonesRemapGUID; // Input parameter to fetch correct skinning stream.
+		uint32        bonesRemapGUID               = 0u; // Input parameter to fetch correct skinning stream.
 
-		int           primitiveType; //!< \see eRenderPrimitiveType
-		InputLayoutHandle eVertFormat;
+		int           primitiveType                = 0; //!< \see eRenderPrimitiveType
+		InputLayoutHandle eVertFormat              = EDefaultInputLayouts::Empty;
 
-		int32         nFirstIndex;
-		int32         nNumIndices;
-		uint32        nFirstVertex;
-		uint32        nNumVertices;
+		int32         nFirstIndex                  = 0;
+		int32         nNumIndices                  = 0;
+		uint32        nFirstVertex                 = 0u;
+		uint32        nNumVertices                 = 0u;
 
-		uint32        nNumVertexStreams;
+		uint32        nNumVertexStreams            = 0u;
 
 		SStreamInfo   indexStream;
 		SStreamInfo   vertexStreams[VSF_NUM]; // contains only nNumVertexStreams elements
 
-		void*         pTessellationAdjacencyBuffer;
-		void*         pSkinningExtraBonesBuffer;
-		uint32        nTessellationPatchIDOffset;
+		void*         pTessellationAdjacencyBuffer = nullptr;
+		void*         pSkinningExtraBonesBuffer    = nullptr;
+		uint32        nTessellationPatchIDOffset   = 0u;
 
 		inline uint32 CalcStreamMask()
 		{
@@ -214,7 +214,7 @@ public:
 	virtual bool               mfIsHWSkinned() { return false; }
 	virtual CRenderElement*    mfCopyConstruct(void);
 	virtual void               mfCenter(Vec3& centr, CRenderObject* pObj, const SRenderingPassInfo& passInfo);
-	virtual void               mfGetBBox(Vec3& vMins, Vec3& vMaxs)
+	virtual void               mfGetBBox(Vec3& vMins, Vec3& vMaxs) const
 	{
 		vMins.Set(0, 0, 0);
 		vMaxs.Set(0, 0, 0);
@@ -243,7 +243,7 @@ public:
 
 	//! Custom Drawing for the non mesh render elements.
 	//! Must be thread safe for the parallel recording
-	virtual void          DrawToCommandList(CRenderObject* pObj, const struct SGraphicsPipelinePassContext& ctx)  {};
+	virtual void          DrawToCommandList(CRenderObject* pObj, const struct SGraphicsPipelinePassContext& ctx, class CDeviceCommandList* commandList)  {};
 	
 	//////////////////////////////////////////////////////////////////////////
 	// ~Pipeline 2.0 methods.

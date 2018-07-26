@@ -290,7 +290,6 @@ void Callback_ShadingDirect(in ForwardShadingAttribs attribs, in ForwardLightPar
 	specularAcc = specularAcc * light.illuminance;
 }
 
-#include "TiledShading.cfi"
 #include "ForwardShading.cfi"
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -317,10 +316,6 @@ struct vtxOutVegetation
 
 #if ENABLE_TESSELLATION && !%_RT_NO_TESSELLATION
 	float4 vNormal              : TEXCOORDN;
-#endif
-
-#if %_RT_FOG
-	float4 AvgFogVolumeContrib  : TEXCOORDN;
 #endif
 };
 
@@ -384,8 +379,6 @@ vtxOutVegetation VegetationVS(app2vertGeneral IN)
 		float alphaTest = Get_MaterialAlphaTest();
 		OUT.binormVec.w = ParallelOpacityFalloff(vertPassPos.WorldPos.xyz, worldTangentN.xyz, CapOpacityFalloff, alphaTest);
 	#endif
-
-	OUT.AvgFogVolumeContrib = Fwd_GetLocalFogColor(vertPassPos.WorldPos.xyz, OUT.vView.xyz);
 #endif
 	return OUT;
 }
@@ -515,6 +508,7 @@ technique General
 	#if !%GRASS
 		"TechniqueMotionBlur=MotionBlurPass;"         
 	#endif
+		"TechniqueCustomRender=CustomRenderVegetation;"
 		"TechniqueShadowGen=ShadowGen;" 
 		"TechniqueDebug=DebugPass;"
 >
@@ -551,3 +545,103 @@ technique General
 #include "ShadowCommon.cfi"
 #include "CommonShadowGenPass.cfi"
 #include "CommonDebugPass.cfi"
+#include "CommonViewsPass.cfi"
+
+
+
+
+vert2fragCustomRender Vegetation_CustomRenderPassVS(app2vertCustomViews IN)
+{
+	vert2fragCustomRender OUT = (vert2fragCustomRender)0;
+
+	streamPos vertPassPos = (streamPos)0;
+	streamPos_FromCustomViews(IN, vertPassPos);
+	
+#if !%_RT_ENVIRONMENT_CUBEMAP
+	OUT.cVision = CD_CustomData1;
+#else
+	OUT.cVision = 0.0f;
+#endif
+
+#if !ENABLE_TESSELLATION || %_RT_NO_TESSELLATION
+	OUT.HPosition = Pos_VS_General(g_VS_ViewProjZeroMatr, vertPassPos);
+	OUT.screenProj = HPosToScreenTC(OUT.HPosition);
+#else
+	OUT.screenProj = HPosToScreenTC(Pos_VS_General(g_VS_ViewProjZeroMatr, vertPassPos));
+#endif
+
+	// Apply texture modifiers
+	_TCModify(vertPassPos.baseTC, OUT.baseTC, vertPassPos.Position, vertPassPos.ObjToTangentSpace[2], TS_DIFFUSE);
+
+	float3 worldTangentS = normalize(mul((const float3x3)vertPassPos.InstMatrix, vertPassPos.ObjToTangentSpace[0]));
+	float3 worldTangentT = normalize(mul((const float3x3)vertPassPos.InstMatrix, vertPassPos.ObjToTangentSpace[1]));
+	float3 worldTangentN = normalize(mul((const float3x3)vertPassPos.InstMatrix, vertPassPos.ObjToTangentSpace[2]));
+
+	float3 outPos = vertPassPos.WorldPos.xyz;
+#if %_RT_OBJ_IDENTITY
+	outPos.xyz -= g_VS_WorldViewPos.xyz;
+#else
+	vertPassPos.WorldPos.xyz += g_VS_WorldViewPos.xyz;
+#endif
+
+	OUT.vView.xyz = outPos.xyz;
+
+#if ENABLE_TESSELLATION && !%_RT_NO_TESSELLATION
+	OUT.vNormal.xyz = normalize(mul((const float3x3)vertPassPos.InstMatrix, vertPassPos.Normal.xyz));
+#endif
+
+	return OUT;
+}
+
+
+pixout Vegetation_CustomRenderPassPS(vert2fragCustomRender IN)
+{
+	pixout OUT = (pixout)0;
+
+	// Switch between diferent rendering modes
+
+#if %_RT_SAMPLE0
+
+	OUT.Color = SilhouetteGeometryHighlights(IN);
+
+#elif %_RT_SAMPLE1
+
+	OUT.Color.xyz = ThermalVision(IN);
+	OUT.Color.w = 1;
+
+#elif %_RT_SAMPLE2
+
+	OUT.Color = SilhouetteVisionOptimised(IN);
+
+#else
+
+	OUT.Color = SilhouetteVision(IN);
+
+#endif
+
+#if %_RT_ALPHATEST
+	half diffuseMapAlpha = GetAlphaTex(diffuseTex, IN.baseTC.xy);
+	clip(diffuseMapAlpha - Get_MaterialAlphaTest());
+#endif
+
+	return OUT;
+}
+
+
+technique CustomRenderVegetation
+{
+	pass p0
+	{
+		VertexShader = Vegetation_CustomRenderPassVS() CustomRenderVS;
+		PixelShader = Vegetation_CustomRenderPassPS() CustomRenderPS;
+
+		ZEnable = true;
+		ZWriteEnable = true;
+
+#if %GRASS || %LEAVES
+		CullMode = None;
+#else
+		CullMode = Back;
+#endif
+	}
+}

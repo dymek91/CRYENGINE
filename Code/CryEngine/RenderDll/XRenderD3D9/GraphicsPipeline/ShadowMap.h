@@ -8,25 +8,18 @@
 #include "Common/FullscreenPass.h"
 #include "Common/RenderView.h"
 #include "Common/UtilityPasses.h"
+#include "SceneGBuffer.h"
 #include <array>
 
 class CShadowMapStage : public CGraphicsPipelineStage
 {
 	enum EPerPassTexture
 	{
-		EPerPassTexture_PerlinNoiseMap = 25,
-		EPerPassTexture_TerrainElevMap = 26,
-		EPerPassTexture_WindGrid       = 27,
-		EPerPassTexture_TerrainNormMap = 28,
-		EPerPassTexture_TerrainBaseMap = 29,
-		EPerPassTexture_DissolveNoise  = 31,
-
-		/*EPerPassTexture_PerlinNoiseMap = 45,
-		EPerPassTexture_TerrainElevMap = 46,
-		EPerPassTexture_WindGrid       = 47,
-		EPerPassTexture_TerrainNormMap = 48,
-		EPerPassTexture_TerrainBaseMap = 49,
-		EPerPassTexture_DissolveNoise  = 51,*/
+		EPerPassTexture_PerlinNoiseMap = CSceneGBufferStage::ePerPassTexture_PerlinNoiseMap,
+		EPerPassTexture_WindGrid       = CSceneGBufferStage::ePerPassTexture_WindGrid,
+		EPerPassTexture_TerrainElevMap = CSceneGBufferStage::ePerPassTexture_TerrainElevMap,
+		EPerPassTexture_TerrainBaseMap = CSceneGBufferStage::ePerPassTexture_TerrainBaseMap,
+		EPerPassTexture_DissolveNoise  = CSceneGBufferStage::ePerPassTexture_DissolveNoise,
 	};
 
 	enum EPass
@@ -44,8 +37,8 @@ class CShadowMapStage : public CGraphicsPipelineStage
 public:
 	CShadowMapStage();
 
-	void Init() final;
-	void Prepare();
+	void Init()   final;
+	void Update() final;
 
 	void ReAllocateResources();
 	void Execute();

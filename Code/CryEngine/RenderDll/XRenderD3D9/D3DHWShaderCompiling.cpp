@@ -5,6 +5,7 @@
 
 #include <lzss/LZSS.H>
 #include <lzma/Lzma86.h>
+#include <cstring>
 
 #if !CRY_PLATFORM_ORBIS && !CRY_RENDERER_OPENGL && !CRY_RENDERER_OPENGLES && !CRY_RENDERER_VULKAN
 	#if CRY_PLATFORM_DURANGO
@@ -261,9 +262,9 @@ int CGBindCallback(const VOID* arg1, const VOID* arg2)
 	return 0;
 }
 
-char* szNamesCB[CB_NUM] = { "PER_BATCH", "PER_INSTANCE", "PER_FRAME", "PER_MATERIAL", "PER_LIGHT", "PER_SHADOWGEN", "SKIN_DATA", "INSTANCE_DATA" };
+const char* szNamesCB[CB_NUM] = { "PER_BATCH", "PER_MATERIAL" };
 
-void CHWShader_D3D::mfCreateBinds(SHWSInstance* pInst, void* pConstantTable, byte* pShader, int nSize)
+void CHWShader_D3D::mfCreateBinds(std::vector<SCGBind> &binds, const void* pConstantTable, std::size_t nSize)
 {
 	uint32 i;
 	ID3D11ShaderReflection* pShaderReflection = (ID3D11ShaderReflection*)pConstantTable;
@@ -279,7 +280,7 @@ void CHWShader_D3D::mfCreateBinds(SHWSInstance* pInst, void* pConstantTable, byt
 			continue;
 		int nCB;
 		if (!strcmp("$Globals", SBDesc.Name))
-			nCB = CB_PER_BATCH;
+			nCB = CB_PER_DRAW;
 		else
 			for (nCB = 0; nCB < CB_NUM; nCB++)
 			{
@@ -311,7 +312,7 @@ void CHWShader_D3D::mfCreateBinds(SHWSInstance* pInst, void* pConstantTable, byt
 				cgp.m_nParameters = (CDesc.Size + 15) >> 4;
 				cgp.m_Name = CDesc.Name;
 				cgp.m_Flags = CParserBin::GetCRC32(CDesc.Name);
-				pInst->m_pBindVars.push_back(cgp);
+				binds.push_back(cgp);
 			}
 			else
 			{
@@ -340,42 +341,29 @@ void CHWShader_D3D::mfCreateBinds(SHWSInstance* pInst, void* pConstantTable, byt
 		cgp.m_nParameters = IBDesc.BindCount;
 		cgp.m_Name = IBDesc.Name;
 		cgp.m_Flags = CParserBin::GetCRC32(IBDesc.Name);
-		pInst->m_pBindVars.push_back(cgp);
+		binds.push_back(cgp);
 	}
 }
 
-void CHWShader_D3D::mfGatherFXParameters(SHWSInstance* pInst, std::vector<SCGBind>* BindVars, std::vector<SCGBind>* InstBindVars, CHWShader_D3D* pSH, int nFlags, CShader* pFXShader)
+void CHWShader_D3D::mfGatherFXParameters(SHWSInstance* pInst, std::vector<SCGBind>& BindVars, CHWShader_D3D* pSH, int nFlags, CShader* pFXShader)
 {
 	//	LOADING_TIME_PROFILE_SECTION(iSystem);
 
 	uint32 i, j;
 	SAliasSampler samps[MAX_TMU];
-	int nMaxSampler = -1;
 	int nParam = 0;
 	SParamsGroup Group;
 	SShaderFXParams& FXParams = gRenDev->m_cEF.m_Bin.mfGetFXParams(pInst->m_bFallback ? CShaderMan::s_ShaderFallback : pFXShader);
 	if (pInst->m_pBindVars.size())
 	{
-		std::list<uint32> skipped;
-
 		for (i = 0; i < pInst->m_pBindVars.size(); i++)
 		{
-			SCGBind* bn = &(*BindVars)[i];
+			SCGBind* bn = &BindVars[i];
 			const char* param = bn->m_Name.c_str();
 
 			if (!strncmp(param, "_g_", 3))
 				continue;
-			bool bRes = mfAddFXParameter(pInst, Group, FXParams, param, bn, false, pSH->m_eSHClass, pFXShader);
-			if (!bRes && !(bn->m_dwBind & (SHADER_BIND_TEXTURE | SHADER_BIND_SAMPLER)))
-			{
-				//iLog->LogWarning("WARNING: Couldn't find parameter '%s' for shader '%s'", param, pSH->GetName());
-				// const parameters aren't listed in Params
-				// assert(0);
-			}
-			else if (!bRes && (bn->m_dwBind & SHADER_BIND_TEXTURE)) // try to find old samplers (Without semantics)
-			{
-				skipped.push_back(i);
-			}
+			mfAddFXParameter(pInst, Group, FXParams, param, bn, false, pSH->m_eSHClass, pFXShader);
 		}
 
 		bool setSamplers[256] = { false };
@@ -385,171 +373,16 @@ void CHWShader_D3D::mfGatherFXParameters(SHWSInstance* pInst, std::vector<SCGBin
 			setSamplers[pInst->m_Samplers[i].m_dwBind & 0xff] = true;
 		for (i = 0; i < pInst->m_Textures.size(); i++)
 			setTextures[pInst->m_Textures[i].m_dwBind & 0xff] = true;
-
-		while (skipped.size() > 0)
-		{
-			i = skipped.front();
-			skipped.pop_front();
-
-			SCGBind* bn = &(*BindVars)[i];
-			const char* param = bn->m_Name.c_str();
-
-			{
-				for (j = 0; j < (uint32)FXParams.m_FXSamplersOld.size(); j++)
-				{
-					STexSamplerFX* sm = &FXParams.m_FXSamplersOld[j];
-					if (!stricmp(sm->m_szName.c_str(), param))
-					{
-						int nSampler = bn->m_dwBind & 0x7f;
-						if (nSampler < MAX_TMU)
-						{
-							nMaxSampler = max(nSampler, nMaxSampler);
-							samps[nSampler].Sampler = STexSamplerRT(*sm);
-							samps[nSampler].NameTex = sm->m_szTexture;
-							samps[nSampler].Sampler.m_nSamplerSlot = (int8)(bn->m_dwCBufSlot & 0xff);
-							samps[nSampler].Sampler.m_nTextureSlot = nSampler;
-
-							// Solve slot-assignment when Sampler2D gets distinct t? and s? slot assigned by fxc (2 binds exist then)
-							for (int k = 0; k < pInst->m_pBindVars.size(); k++)
-								if ((*BindVars)[k].m_dwBind & SHADER_BIND_TEXTURE)
-									if (!stricmp((*BindVars)[k].m_Name.c_str(), param))
-										samps[nSampler].Sampler.m_nTextureSlot = (int8)(*BindVars)[k].m_dwCBufSlot;
-
-							for (int k = 0; k < pInst->m_pBindVars.size(); k++)
-								if ((*BindVars)[k].m_dwBind & SHADER_BIND_SAMPLER)
-									if (!stricmp((*BindVars)[k].m_Name.c_str(), param))
-										samps[nSampler].Sampler.m_nSamplerSlot = (int8)(*BindVars)[k].m_dwCBufSlot;
-
-							// Texture slot occupied, search an alternative
-							if (setSamplers[samps[nSampler].Sampler.m_nSamplerSlot])
-							{
-								uint32 f = 0;
-								while (setSamplers[f])
-									++f;
-								samps[nSampler].Sampler.m_nSamplerSlot = f;
-								assert(f < 16);
-							}
-
-							// Sampler slot occupied, search an alternative
-							if (setTextures[samps[nSampler].Sampler.m_nTextureSlot])
-							{
-								uint32 f = 0;
-								while (setTextures[f])
-									++f;
-								samps[nSampler].Sampler.m_nTextureSlot = f;
-								assert(f < 256);
-							}
-
-							setTextures[samps[nSampler].Sampler.m_nTextureSlot] = true;
-							setSamplers[samps[nSampler].Sampler.m_nSamplerSlot] = true;
-
-							break;
-						}
-					}
-				}
-
-				if (j == FXParams.m_FXSamplersOld.size())
-				{
-					for (j = 0; j < (uint32)FXParams.m_FXSamplersOld.size(); j++)
-					{
-						STexSamplerFX* sm = &FXParams.m_FXSamplersOld[j];
-						const char* src = sm->m_szName.c_str();
-						char name[128];
-						int n = 0;
-						while (src[n])
-						{
-							if (src[n] <= 0x20 || src[n] == '[')
-								break;
-							name[n] = src[n];
-							n++;
-						}
-						name[n] = 0;
-						if (!stricmp(name, param))
-						{
-							int nSampler = bn->m_dwBind & 0x7f;
-							if (nSampler < MAX_TMU)
-							{
-								samps[nSampler].Sampler = STexSamplerRT(*sm);
-								samps[nSampler].NameTex = sm->m_szTexture;
-								samps[nSampler].Sampler.m_nSamplerSlot = (int8)(bn->m_dwCBufSlot & 0xff);
-								samps[nSampler].Sampler.m_nTextureSlot = nSampler;
-
-								// Solve slot-assignment when Sampler2D gets distinct t? and s? slot assigned by fxc (2 binds exist then)
-								for (int k = 0; k < pInst->m_pBindVars.size(); k++)
-									if ((*BindVars)[k].m_dwBind & SHADER_BIND_TEXTURE)
-										if (!stricmp((*BindVars)[k].m_Name.c_str(), param))
-											samps[nSampler].Sampler.m_nTextureSlot = (int8)(*BindVars)[k].m_dwCBufSlot;
-
-								for (int k = 0; k < pInst->m_pBindVars.size(); k++)
-									if ((*BindVars)[k].m_dwBind & SHADER_BIND_SAMPLER)
-										if (!stricmp((*BindVars)[k].m_Name.c_str(), param))
-											samps[nSampler].Sampler.m_nSamplerSlot = (int8)(*BindVars)[k].m_dwCBufSlot;
-
-								// Texture slot occupied, search an alternative
-								if (setSamplers[samps[nSampler].Sampler.m_nSamplerSlot])
-								{
-									uint32 f = 0;
-									while (setSamplers[f])
-										++f;
-									samps[nSampler].Sampler.m_nSamplerSlot = f;
-									assert(f < 16);
-								}
-
-								// Sampler slot occupied, search an alternative
-								if (setTextures[samps[nSampler].Sampler.m_nTextureSlot])
-								{
-									uint32 f = 0;
-									while (setTextures[f])
-										++f;
-									samps[nSampler].Sampler.m_nTextureSlot = f;
-									assert(f < 256);
-								}
-
-								setTextures[samps[nSampler].Sampler.m_nTextureSlot] = true;
-								setSamplers[samps[nSampler].Sampler.m_nSamplerSlot] = true;
-
-								for (int nS = 0; nS < bn->m_nParameters; nS++)
-								{
-									nMaxSampler = max(nSampler + nS, nMaxSampler);
-									samps[nSampler + nS].Sampler = samps[nSampler].Sampler;
-									samps[nSampler + nS].NameTex = sm->m_szTexture;
-								}
-								break;
-							}
-						}
-					}
-					if (j == FXParams.m_FXSamplersOld.size())
-					{
-						// const parameters aren't listed in Params
-						//iLog->LogWarning("WARNING: Couldn't find parameter '%s' for shader '%s'", param, pSH->GetName());
-						//assert(0);
-					}
-				}
-			}
-		}
 	}
 	if (nFlags != 1)
 	{
-		for (i = 0; (int)i <= nMaxSampler; i++)
-		{
-			STexSamplerRT& smp = samps[i].Sampler;
-			smp.m_pTex = gRenDev->m_cEF.mfParseFXTechnique_LoadShaderTexture(&smp, samps[i].NameTex.c_str(), NULL, NULL, i, eCO_NOSET, eCO_NOSET, DEF_TEXARG0, DEF_TEXARG0);
-			if (!smp.m_pTex)
-				continue;
-			assert(!smp.m_pDynTexSource);
-			if (smp.m_bGlobal)
-			{
-				//mfAddGlobalSampler(smp);
-			}
-			else
-				pInst->m_pSamplers.push_back(smp);
-		}
+		pInst->m_pFXTextures.reserve(FXParams.m_FXTextures.size());
+		for (const auto &t : FXParams.m_FXTextures)
+			pInst->m_pFXTextures.push_back(&t);;
 	}
 	else
 	{
 		assert(pInst->m_pAsync);
-		if (pInst->m_pAsync && nMaxSampler >= 0)
-			pInst->m_pAsync->m_bPendedSamplers = true;
 	}
 
 	pInst->m_nMaxVecs[0] = pInst->m_nMaxVecs[1] = 0;
@@ -560,7 +393,7 @@ void CHWShader_D3D::mfGatherFXParameters(SHWSInstance* pInst, std::vector<SCGBin
 			SCGBind* pB = &pInst->m_pBindVars[i];
 			if (pB->m_dwBind & (SHADER_BIND_SAMPLER | SHADER_BIND_TEXTURE))
 				continue;
-			if (pB->m_dwCBufSlot < 0 || pB->m_dwCBufSlot > 2)
+			if (pB->m_dwCBufSlot < 0 || pB->m_dwCBufSlot > CB_NUM)
 				continue;
 			for (j = 0; j < Group.Params[0].size(); j++)
 			{
@@ -570,8 +403,7 @@ void CHWShader_D3D::mfGatherFXParameters(SHWSInstance* pInst, std::vector<SCGBin
 			}
 			if (j != Group.Params[0].size())
 				continue;
-			if (pB->m_dwCBufSlot < 3)
-				pInst->m_nMaxVecs[pB->m_dwCBufSlot] = max(pB->m_dwBind + pB->m_nParameters, pInst->m_nMaxVecs[pB->m_dwCBufSlot]);
+			pInst->m_nMaxVecs[pB->m_dwCBufSlot] = max(pB->m_dwBind + pB->m_nParameters, pInst->m_nMaxVecs[pB->m_dwCBufSlot]);
 		}
 	}
 	if (Group.Params[0].size())
@@ -587,7 +419,7 @@ void CHWShader_D3D::mfGatherFXParameters(SHWSInstance* pInst, std::vector<SCGBin
 		gRenDev->m_cEF.mfCheckObjectDependParams(Group.Params[0], Group.Params[1], pSH->m_eSHClass, pFXShader);
 	}
 
-	for (i = 0; i < 2; i++)
+	for (i = 0; i < CB_NUM; i++)
 	{
 		if (Group.Params[i].size())
 		{
@@ -1005,13 +837,41 @@ void CHWShader::mfValidateDirEntries(CResFile* pRF)
 #endif
 }
 
+bool CHWShader::mfWriteoutTokensToCache()
+{
+	if (!m_CachedTokens.size())
+		return true;
 
-bool CHWShader_D3D::mfStoreCacheTokenMap(FXShaderToken*& Table, TArray<uint32>*& pSHData, const char* szName)
+	char szName[256];
+#if defined(__GNUC__)
+	cry_sprintf(szName, "$MAP_%llx", m_nMaskGenFX);
+#else
+	cry_sprintf(szName, "$MAP_%I64x", m_nMaskGenFX);
+#endif
+
+	auto cache = AcquireDiskCache(cacheSource::user);
+	CRY_ASSERT_MESSAGE(cache && cache->m_pRes, "Could not acquire user disk cache");
+	if (cache && cache->m_pRes)
+	{
+		CDirEntry de(szName, m_CachedTokens.size(), RF_RES_$TOKENS);
+		cache->m_pRes->mfFileAdd(&de);
+		SDirEntryOpen* pOE = cache->m_pRes->mfOpenEntry(de.GetName());
+		pOE->pData = const_cast<char*>(m_CachedTokens.data());
+		cache->m_pRes->mfFlush();
+		cache->m_pRes->mfCloseEntry(de.GetName(), de.GetFlags());
+
+		return true;
+	}
+
+	return false;
+}
+
+bool CHWShader_D3D::mfStoreCacheTokenMap(const FXShaderToken& Table, const TArray<uint32>& SHData)
 {
 	TArray<byte> Data;
 
 	FXShaderTokenItor itor;
-	uint32 nSize = pSHData->size();
+	uint32 nSize = SHData.size();
 	if (CParserBin::m_bEndians)
 	{
 		uint32 nSizeEnd = nSize;
@@ -1019,7 +879,7 @@ bool CHWShader_D3D::mfStoreCacheTokenMap(FXShaderToken*& Table, TArray<uint32>*&
 		Data.Copy((byte*)&nSizeEnd, sizeof(uint32));
 		for (uint32 i = 0; i < nSize; i++)
 		{
-			uint32 nToken = (*pSHData)[i];
+			uint32 nToken = SHData[i];
 			SwapEndian(nToken, eBigEndian);
 			Data.Copy((byte*)&nToken, sizeof(uint32));
 		}
@@ -1027,11 +887,10 @@ bool CHWShader_D3D::mfStoreCacheTokenMap(FXShaderToken*& Table, TArray<uint32>*&
 	else
 	{
 		Data.Copy((byte*)&nSize, sizeof(uint32));
-		Data.Copy((byte*)&(*pSHData)[0], nSize * sizeof(uint32));
+		Data.Copy((byte*)&SHData[0], nSize * sizeof(uint32));
 	}
-	for (itor = Table->begin(); itor != Table->end(); itor++)
+	for (auto T : Table)
 	{
-		STokenD T = *itor;
 		if (CParserBin::m_bEndians)
 			SwapEndian(T.Token, eBigEndian);
 		Data.Copy((byte*)&T.Token, sizeof(DWORD));
@@ -1040,45 +899,41 @@ bool CHWShader_D3D::mfStoreCacheTokenMap(FXShaderToken*& Table, TArray<uint32>*&
 	if (!Data.size())
 		return false;
 
-	CDirEntry de(szName, Data.size(), RF_RES_$TOKENS);
-	m_pGlobalCache->m_pRes[CACHE_USER]->mfFileAdd(&de);
-	SDirEntryOpen* pOE = m_pGlobalCache->m_pRes[CACHE_USER]->mfOpenEntry(de.GetName());
-	pOE->pData = &Data[0];
-	m_pGlobalCache->m_pRes[CACHE_USER]->mfFlush();
-	m_pGlobalCache->m_pRes[CACHE_USER]->mfCloseEntry(de.GetName(), de.GetFlags());
+	m_CachedTokens.resize(Data.size());
+	std::memcpy(&m_CachedTokens[0], Data.Data(), Data.size());
+
+	mfWriteoutTokensToCache();
 
 	return true;
 }
 
-void CHWShader_D3D::mfGetTokenMap(CResFile* pRes, CDirEntry* pDE, FXShaderToken*& Table, TArray<uint32>*& pSHData)
+bool CHWShader_D3D::mfGetCacheTokenMap(FXShaderToken& Table, TArray<uint32>& SHData)
 {
-	uint32 i;
-	int nSize = pRes->mfFileRead(pDE);
-	byte* pData = (byte*)pRes->mfFileGetBuf(pDE);
+	std::size_t nSize = m_CachedTokens.size();
+	const auto* pData = reinterpret_cast<const byte*>(m_CachedTokens.data());
 	if (!pData)
 	{
-		Table = NULL;
-		return;
+		Table = {};
+		return false;
 	}
-	Table = new FXShaderToken;
-	pSHData = new TArray<uint32>;
+
 	uint32 nL = *(uint32*)pData;
 	if (CParserBin::m_bEndians)
 		SwapEndian(nL, eBigEndian);
-	pSHData->resize(nL);
+	SHData.resize(nL);
 	if (CParserBin::m_bEndians)
 	{
 		uint32* pTokens = (uint32*)&pData[4];
-		for (i = 0; i < nL; i++)
+		for (uint32_t i = 0; i < nL; i++)
 		{
 			uint32 nToken = pTokens[i];
 			SwapEndian(nToken, eBigEndian);
-			(*pSHData)[i] = nToken;
+			SHData[i] = nToken;
 		}
 	}
 	else
 	{
-		memcpy(&(*pSHData)[0], &pData[4], nL * sizeof(uint32));
+		memcpy(&SHData[0], &pData[4], nL * sizeof(uint32));
 	}
 	pData += 4 + nL * sizeof(uint32);
 	nSize -= 4 + nL * sizeof(uint32);
@@ -1095,116 +950,43 @@ void CHWShader_D3D::mfGetTokenMap(CResFile* pRes, CDirEntry* pDE, FXShaderToken*
 		STokenD TD;
 		TD.Token = nToken;
 		TD.SToken = pStr;
-		Table->push_back(TD);
+		Table.push_back(TD);
 		nOffs += sizeof(DWORD) + nLen;
 	}
-}
-
-bool CHWShader_D3D::mfGetCacheTokenMap(FXShaderToken*& Table, TArray<uint32>*& pSHData, uint64 nMaskGenFX)
-{
-	if (!m_pGlobalCache || !m_pGlobalCache->isValid())
-	{
-		if (m_pGlobalCache)
-			m_pGlobalCache->Release(false);
-		m_pGlobalCache = mfInitCache(NULL, this, true, m_CRC32, true, CRenderer::CV_r_shadersasyncactivation != 0);
-	}
-	if (!m_pGlobalCache)
-	{
-		assert(false);
-		return false;
-	}
-
-	char strName[256];
-#if defined(__GNUC__)
-	cry_sprintf(strName, "$MAP_%llx", nMaskGenFX);
-#else
-	cry_sprintf(strName, "$MAP_%I64x", nMaskGenFX);
-#endif
-
-	if (Table)
-	{
-		if (m_pGlobalCache->m_pRes[CACHE_READONLY] && m_pGlobalCache->m_pRes[CACHE_READONLY]->mfFileExist(strName))
-			return true;
-		if (!m_pGlobalCache->m_pRes[CACHE_USER])
-		{
-			m_pGlobalCache->Release(false);
-			m_pGlobalCache = mfInitCache(NULL, this, true, m_CRC32, false);
-		}
-		if (!m_pGlobalCache || !m_pGlobalCache->m_pRes[CACHE_USER])
-		{
-			assert(false);
-			return false;
-		}
-		if (!m_pGlobalCache->m_pRes[CACHE_USER]->mfFileExist(strName))
-		{
-			if (!CRenderer::CV_r_shadersAllowCompilation)
-				return false;
-
-			//CryLogAlways("Storing MAP entry '%s' in shader cache file '%s'", strName, m_pGlobalCache->m_Name.c_str());
-
-			return mfStoreCacheTokenMap(Table, pSHData, strName);
-		}
-		return true;
-	}
-	CDirEntry* pDE = nullptr;
-	CResFile* pRes = nullptr;
-	for (int i = 0; i < 2; i++)
-	{
-		pRes = m_pGlobalCache->m_pRes[i];
-		if (!pRes)
-			continue;
-		pDE = pRes->mfGetEntry(strName);
-		if (pDE)
-			break;
-	}
-	if (!pDE || !pRes)
-	{
-		Warning("Couldn't find tokens MAP entry '%s' in shader cache file '%s'", strName, m_pGlobalCache->m_Name.c_str());
-		ASSERT_IN_SHADER(0);
-		return false;
-	}
-	mfGetTokenMap(pRes, pDE, Table, pSHData);
-	pRes->mfFileClose(pDE->GetName(), pDE->GetFlags());
 
 	return true;
 }
 
 //==============================================================================================================================================================
 
-bool CHWShader_D3D::mfGenerateScript(CShader* pSH, SHWSInstance* pInst, std::vector<SCGBind>& InstBindVars, uint32 nFlags, FXShaderToken* Table, TArray<uint32>* pSHData, TArray<char>& sNewScr)
+bool CHWShader_D3D::mfGenerateScript(CShader* pSH, SHWSInstance* pInst, std::vector<SCGBind>& InstBindVars, uint32 nFlags, TArray<char>& sNewScr)
 {
-	char* cgs = NULL;
-
 	uint32 nSFlags = m_Flags;
-	bool bTempMap = (Table == NULL);
-	assert((Table && pSHData) || (!Table && !pSHData));
-	assert(m_pGlobalCache);
-	if (CParserBin::m_bEditable && !Table) // Fast path for offline shaders builder
+	FXShaderToken Table;
+	TArray<uint32> SHData;
+
+	if (CParserBin::m_bEditable) // Fast path for offline shaders builder
 	{
-		Table = &m_TokenTable;
-		pSHData = &m_TokenData;
-		bTempMap = false;
+		Table = m_TokenTable;
+		SHData = m_TokenData;
 	}
 	else
 	{
-		if (m_pGlobalCache && !(nSFlags & HWSG_GS_MULTIRES))
-			mfGetCacheTokenMap(Table, pSHData, m_nMaskGenShader);
+		if (!(nSFlags & HWSG_GS_MULTIRES))
+		{
+			if (!mfGetCacheTokenMap(Table, SHData))
+				return false;
+		}
 		if (CParserBin::m_bEditable)
 		{
-			if (bTempMap)
-			{
-				SAFE_DELETE(Table);
-				SAFE_DELETE(pSHData);
-			}
-			Table = &m_TokenTable;
-			pSHData = &m_TokenData;
-			bTempMap = false;
+			Table = m_TokenTable;
+			SHData = m_TokenData;
 		}
 	}
 	if (!(nSFlags & HWSG_GS_MULTIRES))
 	{
-		assert(Table && pSHData);
-		if (!Table || !pSHData)
+		assert(Table.size() && SHData.size());
+		if (!Table.size() || !SHData.size())
 			return false;
 	}
 
@@ -1247,11 +1029,9 @@ bool CHWShader_D3D::mfGenerateScript(CShader* pSH, SHWSInstance* pInst, std::vec
 		assert(pInst);
 
 		CHWShader_D3D* curVS = (CHWShader_D3D *)s_pCurHWVS;
-		Table = &curVS->m_TokenTable;
-		pSHData = &curVS->m_TokenData;
+		Table = curVS->m_TokenTable;
+		SHData = curVS->m_TokenData;
 		nSFlags = curVS->m_Flags;
-
-		bTempMap = false;
 	}
 
 	// Include runtime mask definitions in the script
@@ -1391,14 +1171,14 @@ bool CHWShader_D3D::mfGenerateScript(CShader* pSH, SHWSInstance* pInst, std::vec
 	}
 
 	int nT = NewTokens.size();
-	NewTokens.resize(nT + pSHData->size());
-	memcpy(&NewTokens[nT], &(*pSHData)[0], pSHData->size() * sizeof(uint32));
+	NewTokens.resize(nT + SHData.size());
+	memcpy(&NewTokens[nT], &SHData[0], SHData.size() * sizeof(uint32));
 
-	CParserBin Parser(NULL, pSH);
+	CParserBin Parser(nullptr, pSH);
 	Parser.Preprocess(1, NewTokens, Table);
 	CorrectScriptEnums(Parser, pInst, InstBindVars, Table);
 	RemoveUnaffectedParameters_D3D10(Parser, pInst, InstBindVars);
-	AddResourceLayoutToBinScript(Parser, pInst, Table);
+	AddResourceLayoutToBinScript(Parser, pInst, &Table);
 	ConvertBinScriptToASCII(Parser, pInst, InstBindVars, Table, sNewScr);
 	AddResourceLayoutToScriptHeader(pInst, mfProfileString(pInst->m_eClass), m_EntryFunc.c_str(), sNewScr);
 
@@ -1409,19 +1189,6 @@ bool CHWShader_D3D::mfGenerateScript(CShader* pSH, SHWSInstance* pInst, std::vec
 		if (!bResult)
 			return false;
 	}
-
-	if (bTempMap)
-	{
-		SAFE_DELETE(Table);
-		SAFE_DELETE(pSHData);
-	}
-
-	/* FILE *fp = gEnv->pCryPak->FOpen("fff", "w");
-	   if (fp)
-	   {
-	   gEnv->pCryPak->FPrintf(fp, "%s", &sNewScr[0]);
-	   gEnv->pCryPak->FClose (fp);
-	   }*/
 
 	return sNewScr.Num() && sNewScr[0];
 }
@@ -1510,9 +1277,9 @@ bool CHWShader_D3D::AutoGenMultiresGS(TArray<char>& sNewScr, CShader *pSH)
 		memcpy(&NewTokens[nT], &m_TokenData[0], m_TokenData.size() * sizeof(uint32));
 
 		std::vector<SCGBind> InstBindVars;
-		CParserBin Parser(NULL, pSH);
-		Parser.Preprocess(1, NewTokens, &m_TokenTable);
-		ConvertBinScriptToASCII(Parser, m_pCurInst, InstBindVars, &m_TokenTable, szNewS);
+		CParserBin Parser(nullptr, pSH);
+		Parser.Preprocess(1, NewTokens, m_TokenTable);
+		ConvertBinScriptToASCII(Parser, m_pCurInst, InstBindVars, m_TokenTable, szNewS);
 
 		sNewScr.Copy(szNewS);
 	}
@@ -1521,96 +1288,6 @@ bool CHWShader_D3D::AutoGenMultiresGS(TArray<char>& sNewScr, CShader *pSH)
 
 	return true;
 }
-
-/*static uint32 sFindVar(CParserBin& Parser, int& nStart)
-   {
-   const uint32 *pTokens = Parser.GetTokens(0);
-   int nLast = Parser.GetNumTokens()-1;
-
-   while (nStart <= nLast)
-   {
-    if (pTokens[nStart] == eT_br_cv_1)
-    {
-      int nRecurs = 1;
-      nStart++;
-      while(nStart <= nLast)
-      {
-        if (pTokens[nStart++] == eT_br_cv_1)
-          nRecurs++;
-        else
-        if (pTokens[nStart++] == eT_br_cv_2)
-        {
-          nRecurs--;
-          if (nRecurs == 0)
-            break;
-        }
-      }
-    }
-    if (nStart <= nLast)
-      break;
-    if (pTokens[nStart] >= eT_float && pTokens[nStart] <= eT_int)
-    {
-      if (nStart+3 <= nLast)
-      {
-        uint32 nName = pTokens[nStart+1];
-        uint32 nN = pTokens[nStart+2];
-        if (nN != eT_colon)
-        {
-          if (nN == eT_br_sq_1)
-          {
-            assert(pTokens[nStart+4] == eT_br_sq_2);
-            if (pTokens[nStart+4] == eT_br_sq_2)
-              nN = pTokens[nStart+5];
-          }
-        }
-        if (nN == eT_colon)
-          return nName;
-        nStart += 3;
-      }
-      else
-        break;
-    }
-    nStart++;
-   }
-   nStart = -1;
-   return 0;
-   }
-
-   bool sIsAffectFuncs(CParserBin& Parser, uint32 nName)
-   {
-   const uint32 *pTokens = Parser.GetTokens(0);
-   int nStart = 0;
-   int nLast = Parser.GetNumTokens()-1;
-
-   while (nStart <= nLast)
-   {
-    if (pTokens[nStart] == eT_br_cv_1)
-    {
-      int nRecurs = 1;
-      nStart++;
-      int nBegin = nStart;
-      while(nStart <= nLast)
-      {
-        if (pTokens[nStart++] == eT_br_cv_1)
-          nRecurs++;
-        else
-        if (pTokens[nStart++] == eT_br_cv_2)
-        {
-          nRecurs--;
-          if (nRecurs == 0)
-            break;
-        }
-      }
-      if (nStart <= nLast)
-        break;
-      int nPos = Parser.FindToken(nBegin, nStart, nName);
-      if (nPos >= 0)
-        return true;
-    }
-    nStart++;
-   }
-   return false;
-   }*/
 
 void CHWShader_D3D::RemoveUnaffectedParameters_D3D10(CParserBin& Parser, SHWSInstance* pInst, std::vector<SCGBind>& InstBindVars)
 {
@@ -1877,7 +1554,7 @@ struct SStructData
 	int    m_nPos;
 };
 
-void CHWShader_D3D::CorrectScriptEnums(CParserBin& Parser, SHWSInstance* pInst, std::vector<SCGBind>& InstBindVars, FXShaderToken* Table)
+void CHWShader_D3D::CorrectScriptEnums(CParserBin& Parser, SHWSInstance* pInst, std::vector<SCGBind>& InstBindVars, const FXShaderToken& Table)
 {
 	// correct enumeration of TEXCOORD# interpolators after preprocessing
 	int nCur = 0;
@@ -1933,7 +1610,7 @@ void CHWShader_D3D::CorrectScriptEnums(CParserBin& Parser, SHWSInstance* pInst, 
 				nArrSize = pTokens[nTN - 3] - eT_0;
 				if ((unsigned int) nArrSize > 15)
 				{
-					const char* szArrSize = Parser.GetString(pTokens[nTN - 3], *Table);
+					const char* szArrSize = Parser.GetString(pTokens[nTN - 3], Table);
 					nArrSize = szArrSize ? atoi(szArrSize) : 0;
 				}
 				assert(pTokens[nTN - 4] == eT_br_sq_1);
@@ -2004,22 +1681,11 @@ static void sCR(TArray<char>& Text, int nLevel)
 	}
 }
 
-bool CHWShader_D3D::ConvertBinScriptToASCII(CParserBin& Parser, SHWSInstance* pInst, std::vector<SCGBind>& InstBindVars, FXShaderToken* Table, TArray<char>& Text)
+bool CHWShader_D3D::ConvertBinScriptToASCII(CParserBin& Parser, SHWSInstance* pInst, std::vector<SCGBind>& InstBindVars, const FXShaderToken& Table, TArray<char>& Text)
 {
 	uint32 i;
 	bool bRes = true;
 
-	/*if (pInst->m_RTMask == 0x2000020000680104)
-	   {
-	   TArray<char> TempTx;
-	   CParserBin::ConvertToAscii(&Parser.m_Tokens[0], Parser.m_Tokens.size(), *Table, TempTx);
-	   FILE *fp = gEnv->pCryPak->FOpen("inst.txt", "w");
-	   if (fp)
-	   {
-	    gEnv->pCryPak->FPrintf(fp, "%s", &TempTx[0]);
-	    gEnv->pCryPak->FClose (fp);
-	   }
-	   }*/
 	uint32* pTokens = &Parser.m_Tokens[0];
 	uint32 nT = Parser.m_Tokens.size();
 	const char* szPrev = " ";
@@ -2067,14 +1733,14 @@ bool CHWShader_D3D::ConvertBinScriptToASCII(CParserBin& Parser, SHWSInstance* pI
 			}
 			i++;
 			int nSrc = sFetchInst(i, &Parser.m_Tokens[0], Parser.m_Tokens.size(), ParamSrc);
-			CParserBin::ConvertToAscii(&ParamDst[0], ParamDst.size(), *Table, sParamDstFull);
-			CParserBin::ConvertToAscii(&ParamDst[nDst], 1, *Table, sParamDstName);
-			CParserBin::ConvertToAscii(&ParamSrc[nSrc], 1, *Table, sParamSrc);
+			CParserBin::ConvertToAscii(&ParamDst[0], ParamDst.size(), Table, sParamDstFull);
+			CParserBin::ConvertToAscii(&ParamDst[nDst], 1, Table, sParamDstName);
+			CParserBin::ConvertToAscii(&ParamSrc[nSrc], 1, Table, sParamSrc);
 			assert(strncmp(&sParamSrc[0], "Inst", 4) == 0);
 
 			{
 				sParamSrc.Free();
-				CParserBin::ConvertToAscii(&ParamSrc[0], ParamSrc.size(), *Table, sParamSrc);
+				CParserBin::ConvertToAscii(&ParamSrc[0], ParamSrc.size(), Table, sParamSrc);
 				cry_sprintf(str, "%s = %s;\n", &sParamDstFull[0], &sParamSrc[0]);
 				Text.Copy(str, strlen(str));
 			}
@@ -2084,7 +1750,7 @@ bool CHWShader_D3D::ConvertBinScriptToASCII(CParserBin& Parser, SHWSInstance* pI
 			}
 			continue;
 		}
-		const char* szStr = CParserBin::GetString(nToken, *Table, false);
+		const char* szStr = CParserBin::GetString(nToken, Table, false);
 		assert(szStr);
 		if (!szStr || !szStr[0])
 		{
@@ -2270,11 +1936,11 @@ void CHWShader_D3D::mfGenName(SHWSInstance* pInst, char* dstname, int nSize, byt
 		CHWShader::mfGenName(0, 0, 0, 0, 0, 0, eHWSC_Num, dstname, nSize, bType);
 }
 
-void CHWShader_D3D::mfGetDstFileName(SHWSInstance* pInst, CHWShader_D3D* pSH, char* dstname, int nSize, byte bType)
+void CHWShader_D3D::mfGetDstFileName(SHWSInstance* pInst, char* dstname, int nSize, byte bType)
 {
 	cry_strcpy(dstname, nSize, gRenDev->m_cEF.m_ShadersCache);
 
-	if (pSH->m_eSHClass == eHWSC_Vertex)
+	if (m_eSHClass == eHWSC_Vertex)
 	{
 		if (bType == 1 || bType == 4)
 			cry_strcat(dstname, nSize, "CGVShaders/Debug/");
@@ -2283,7 +1949,7 @@ void CHWShader_D3D::mfGetDstFileName(SHWSInstance* pInst, CHWShader_D3D* pSH, ch
 		else if (bType == 2 || bType == 3)
 			cry_strcat(dstname, nSize, "CGVShaders/Pending/");
 	}
-	else if (pSH->m_eSHClass == eHWSC_Pixel)
+	else if (m_eSHClass == eHWSC_Pixel)
 	{
 		if (bType == 1 || bType == 4)
 			cry_strcat(dstname, nSize, "CGPShaders/Debug/");
@@ -2292,7 +1958,7 @@ void CHWShader_D3D::mfGetDstFileName(SHWSInstance* pInst, CHWShader_D3D* pSH, ch
 		else if (bType == 2 || bType == 3)
 			cry_strcat(dstname, nSize, "CGPShaders/Pending/");
 	}
-	else if (GEOMETRYSHADER_SUPPORT && pSH->m_eSHClass == eHWSC_Geometry)
+	else if (m_eSHClass == eHWSC_Geometry)
 	{
 		if (bType == 1 || bType == 4)
 			cry_strcat(dstname, nSize, "CGGShaders/Debug/");
@@ -2301,7 +1967,7 @@ void CHWShader_D3D::mfGetDstFileName(SHWSInstance* pInst, CHWShader_D3D* pSH, ch
 		else if (bType == 2 || bType == 3)
 			cry_strcat(dstname, nSize, "CGGShaders/Pending/");
 	}
-	else if (GEOMETRYSHADER_SUPPORT && pSH->m_eSHClass == eHWSC_Hull)
+	else if (m_eSHClass == eHWSC_Hull)
 	{
 		if (bType == 1 || bType == 4)
 			cry_strcat(dstname, nSize, "CGHShaders/Debug/");
@@ -2310,7 +1976,7 @@ void CHWShader_D3D::mfGetDstFileName(SHWSInstance* pInst, CHWShader_D3D* pSH, ch
 		else if (bType == 2 || bType == 3)
 			cry_strcat(dstname, nSize, "CGHShaders/Pending/");
 	}
-	else if (GEOMETRYSHADER_SUPPORT && pSH->m_eSHClass == eHWSC_Domain)
+	else if (m_eSHClass == eHWSC_Domain)
 	{
 		if (bType == 1 || bType == 4)
 			cry_strcat(dstname, nSize, "CGDShaders/Debug/");
@@ -2319,7 +1985,7 @@ void CHWShader_D3D::mfGetDstFileName(SHWSInstance* pInst, CHWShader_D3D* pSH, ch
 		else if (bType == 2 || bType == 3)
 			cry_strcat(dstname, nSize, "CGDShaders/Pending/");
 	}
-	else if (GEOMETRYSHADER_SUPPORT && pSH->m_eSHClass == eHWSC_Compute)
+	else if (m_eSHClass == eHWSC_Compute)
 	{
 		if (bType == 1 || bType == 4)
 			cry_strcat(dstname, nSize, "CGCShaders/Debug/");
@@ -2329,7 +1995,7 @@ void CHWShader_D3D::mfGetDstFileName(SHWSInstance* pInst, CHWShader_D3D* pSH, ch
 			cry_strcat(dstname, nSize, "CGCShaders/Pending/");
 	}
 
-	cry_strcat(dstname, nSize, pSH->GetName());
+	cry_strcat(dstname, nSize, GetName());
 
 	if (bType == 2)
 		cry_strcat(dstname, nSize, "_out");
@@ -2350,106 +2016,55 @@ void CHWShader_D3D::mfGetDstFileName(SHWSInstance* pInst, CHWShader_D3D* pSH, ch
 //========================================================================================================
 // Binary cache support
 
-SShaderCache::~SShaderCache()
+SDiskShaderCache::SDiskShaderCache(const char* name, cacheSource cacheType) : cacheType(cacheType)
 {
-	if (m_pStreamInfo)
+	OpenCacheFile(name, cacheType);
+}
+
+SDiskShaderCache::SDiskShaderCache(recreateUserCacheTag, const char* name, std::uint32_t CRC32, float cacheVer) : cacheType(cacheSource::user)
+{
+	stack_string szUser = stack_string(gRenDev->m_cEF.m_szUserPath.c_str()) + stack_string(name);
+	CResFile* rfUser = new CResFile(szUser.c_str());
+
+	bool result = rfUser->mfOpen(RA_CREATE | (CParserBin::m_bEndians ? RA_ENDIANS : 0), &gRenDev->m_cEF.m_ResLookupDataMan[static_cast<int>(cacheType)]) > 0;
+	if (!result)
 	{
-		CResFile* pRes = m_pStreamInfo->m_pRes;
-		bool bWarn = false;
-		if (pRes)
-		{
-			assert(pRes == m_pRes[0] || pRes == m_pRes[1]);
-			assert(!pRes->mfIsDirStreaming());
-			//bWarn = pRes->mfIsDirStreaming();
-		}
-		/*if (m_pStreamInfo->m_EntriesQueue.size())
-		   bWarn = true;
-		   if (bWarn)
-		   Warning("Warning: SShader`Cache::~SShaderCache(): '%s' Streaming tasks is still in progress!: %d", m_Name.c_str(), m_pStreamInfo->m_EntriesQueue.size());*/
-
-		m_pStreamInfo->AbortJobs();
+		rfUser->mfClose();
+		SAFE_DELETE(rfUser);
+		return;
 	}
+	rfUser->StoreLookupData(CRC32, cacheVer);
+	rfUser->mfFlush();
 
-	CHWShader::m_ShaderCache.erase(m_Name);
-	SAFE_DELETE(m_pRes[CACHE_USER]);
-	SAFE_DELETE(m_pRes[CACHE_READONLY]);
-	SAFE_RELEASE(m_pStreamInfo);
+	m_pRes = rfUser;
 }
 
-void SShaderCache::Cleanup()
+SDiskShaderCache::~SDiskShaderCache() noexcept
 {
-	if (m_pRes[0])
-		m_pRes[0]->mfDeactivate(true);
-	if (m_pRes[1])
-		m_pRes[1]->mfDeactivate(true);
+	SAFE_DELETE(m_pRes);
 }
 
-bool SShaderCache::isValid()
-{
-	return ((m_pRes[CACHE_READONLY] || m_pRes[CACHE_USER]) && CParserBin::m_nPlatform == m_nPlatform);
-}
-
-int SShaderCache::Size()
-{
-	int nSize = sizeof(SShaderCache);
-
-	if (m_pRes[0])
-		nSize += m_pRes[0]->Size();
-	if (m_pRes[1])
-		nSize += m_pRes[1]->Size();
-
-	return nSize;
-}
-int SShaderDevCache::Size()
-{
-	int nSize = sizeof(SShaderDevCache);
-
-	nSize += m_DeviceShaders.size() * sizeof(SD3DShader);
-
-	return nSize;
-}
-
-void SShaderCache::GetMemoryUsage(ICrySizer* pSizer) const
-{
-	pSizer->AddObject(this, sizeof(*this));
-	pSizer->AddObject(m_pRes[0]);
-	pSizer->AddObject(m_pRes[1]);
-}
-
-bool SShaderCache::ReadResource(CResFile* rf, int i)
-{
-	CryLog("SShaderCache: Caching \"%s\"...", rf->mfGetFileName());
-
-	const auto librarySize = rf->mfGetResourceSize();
-	const auto handle = rf->mfGetHandle();
-	if (librarySize > 0)
-	{
-		m_pBinary[i] = std::unique_ptr<byte[]>(new byte[librarySize]);
-		gEnv->pCryPak->FSeek(handle, 0, SEEK_SET);
-		const auto readBytes = gEnv->pCryPak->FReadRaw(m_pBinary[i].get(), librarySize, 1, handle);
-		if (readBytes != 1)
-		{
-			CryWarning(EValidatorModule::VALIDATOR_MODULE_RENDERER, EValidatorSeverity::VALIDATOR_WARNING, "SShaderCache: \"%s\" invalid!", rf->mfGetFileName());
-			m_pBinary[i] = nullptr;
-
-			return false;
-		}
-
-		return true;
-	}
-
-	return false;
-}
-
-std::pair<std::unique_ptr<byte[]>, uint32> SShaderCache::DecompressResource(int resVersion, int i, size_t offset, size_t size, bool swapEndian)
+std::pair<std::unique_ptr<byte[]>, uint32> SDiskShaderCache::DecompressResource(CResFileOpenScope &scope, size_t offset, size_t size) const
 {
 	using ReturnType = std::pair<std::unique_ptr<byte[]>, size_t>;
 
+	auto* handle = scope.getHandle();
+
+	// Read resource
+	gEnv->pCryPak->FSeek(handle->mfGetHandle(), offset, SEEK_SET);
+	std::unique_ptr<byte[]> dataSource = std::unique_ptr<byte[]>(new byte[size]);
+	const auto readBytes = gEnv->pCryPak->FReadRaw(dataSource.get(), size, 1, handle->mfGetHandle());
+	gEnv->pCryPak->FSeek(handle->mfGetHandle(), 0, SEEK_SET);
+
+	if (!readBytes)
+		return ReturnType{};
+	byte *buf = dataSource.get();
+
+	const auto resVersion = handle->mfGetVersion();
+	const auto swapEndian = handle->RequiresSwapEndianOnRead();
+
 	uint32 decompressedSize = 0;
 	std::unique_ptr<byte[]> pData = nullptr;
-
-	const auto buf = m_pBinary[i].get() + offset;
-
 	switch(resVersion)
 	{
 	case RESVERSION_LZSS:
@@ -2516,116 +2131,113 @@ std::pair<std::unique_ptr<byte[]>, uint32> SShaderCache::DecompressResource(int 
 	return std::make_pair(std::move(pData), decompressedSize);
 }
 
-void SShaderDevCache::GetMemoryUsage(ICrySizer* pSizer) const
+void SDiskShaderCache::GetMemoryUsage(ICrySizer* pSizer) const
 {
 	pSizer->AddObject(this, sizeof(*this));
-	pSizer->AddObject(m_DeviceShaders);
+	pSizer->AddObject(m_pRes);
 }
 
-SShaderDevCache* CHWShader::mfInitDevCache(const char* name, CHWShader* pSH)
+bool SDiskShaderCache::OpenCacheFileImpl(cacheSource cacheType, CResFile* pRF)
 {
-	SShaderDevCache* pCache = NULL;
-	FXShaderDevCacheItor it = m_ShaderDevCache.find(CCryNameR(name));
-	if (it != m_ShaderDevCache.end())
+	bool bValid = true;
+	int nRes = pRF->mfOpen(RA_READ | (CParserBin::m_bEndians ? RA_ENDIANS : 0), &gRenDev->m_cEF.m_ResLookupDataMan[static_cast<int>(cacheType)], nullptr);
+	if (nRes == 0)
 	{
-		pCache = it->second;
-		pCache->m_nRefCount++;
+		pRF->mfClose();
+		bValid = false;
+	}
+	else if (nRes > 0)
+	{
+		if (cacheType == cacheSource::user)
+		{
+			// User cache, reopen with read-write access.
+			pRF->mfClose();
+			if (bValid)
+			{
+				int nAcc = CRenderer::CV_r_shadersAllowCompilation != 0 ? (RA_READ | RA_WRITE) : RA_READ;
+				if (!pRF->mfOpen(nAcc | (CParserBin::m_bEndians ? RA_ENDIANS : 0), &gRenDev->m_cEF.m_ResLookupDataMan[static_cast<int>(cacheType)]))
+				{
+					pRF->mfClose();
+					bValid = false;
+				}
+			}
+		}
+	}
+
+	if (!bValid)
+	{
+		SAFE_DELETE(pRF);
 	}
 	else
-	{
-		pCache = new SShaderDevCache;
-		pCache->m_Name = name;
-	}
-	return pCache;
+		m_pRes = pRF;
+
+	return bValid;
 }
 
-std::unique_ptr<byte[]> CHWShader_D3D::mfGetCacheItem(uint32& nFlags, int32& nSize)
+bool SDiskShaderCache::OpenCacheFile(const char* szName, cacheSource src)
 {
-	LOADING_TIME_PROFILE_SECTION(gEnv->pSystem);
-	SHWSInstance* pInst = m_pCurInst;
-	std::unique_ptr<byte[]> pData;
-	nSize = 0;
-	if (!m_pGlobalCache || !m_pGlobalCache->isValid())
-		return NULL;
-	CResFile* rf = NULL;
-	CDirEntry* de = NULL;
-	int i;
-	bool bAsync = false;
-	int n = CRenderer::CV_r_shadersAllowCompilation == 0 ? 1 : 2;
-	for (i = 0; i < n; i++)
+	bool bValidRO = false;
+	bool bValidUser = true;
+
+	// don't load the readonly cache, when shaderediting is true
+	if (!CRenderer::CV_r_shadersediting && src == cacheSource::readonly)
 	{
-		rf = m_pGlobalCache->m_pRes[i];
-		if (!rf)
-			continue;
-		char name[128];
-		mfGenName(pInst, name, 128, 1);
-		de = rf->mfGetEntry(name, &bAsync);
-		if (de || bAsync)
-			break;
+		stack_string szEngine = stack_string("%ENGINE%/") + stack_string(szName);
+		CResFile* rfRO = new CResFile(szEngine);
+		bValidRO = OpenCacheFileImpl(cacheSource::readonly, rfRO);
 	}
+	else if (src == cacheSource::user)
+	{
+		stack_string szUser = stack_string(gRenDev->m_cEF.m_szUserPath.c_str()) + stack_string(szName);
+		CResFile* rfUser = new CResFile(szUser.c_str());
+		bValidUser = OpenCacheFileImpl(cacheSource::user, rfUser);
+	}
+
+	return (bValidRO || bValidUser);
+}
+
+SDeviceShaderEntry CHWShader_D3D::mfGetCacheItem(CShader* pFX, const char *name, SDiskShaderCache *cache, uint32& nFlags)
+{
+	if (!cache || !cache->m_pRes)
+		return {};
+
+	LOADING_TIME_PROFILE_SECTION(gEnv->pSystem);
+
+	CResFileOpenScope rfOpenGuard(cache->m_pRes);
+	if (!rfOpenGuard.open(RA_READ | (CParserBin::m_bEndians ? RA_ENDIANS : 0), &gRenDev->m_cEF.m_ResLookupDataMan[static_cast<int>(cache->GetType())], nullptr))
+		return {};
+
+	bool bAsync = false;
+	const CDirEntry* de = rfOpenGuard.getHandle()->mfGetEntry(name, &bAsync);
 	if (de)
 	{
-		if (CRenderer::CV_r_shadersdebug == 3 || CRenderer::CV_r_shadersdebug == 4)
-			iLog->Log("---Cache: LoadedFromGlobal %s': 0x%x", rf->mfGetFileName(), de->GetName().get());
-		pInst->m_nCache = i;
+		// Validate
+		if (mfValidateCache(*cache) != cacheValidationResult::ok)
+			return {};
 
-		pInst->m_bAsyncActivating = false;
-
-		// Attempt to cache the whole entry
-		if (!m_pGlobalCache->m_pBinary[i] && CRenderer::CV_r_shaderscacheinmemory != 0)
-			m_pGlobalCache->ReadResource(rf, i);
-
-		if (m_pGlobalCache->m_pBinary[i] && CRenderer::CV_r_shaderscacheinmemory != 0)
-		{
-			if (de->IsValid())
-			{
-				// Decompress from library
-				auto pair = m_pGlobalCache->DecompressResource(rf->mfGetVersion(), i, de->GetOffset(), de->GetSize(), rf->RequiresSwapEndianOnRead());
-				nSize = static_cast<int32>(pair.second);
-				pData = std::move(pair).first;
-			}
-		}
-		else
-		{
-			nSize = rf->mfFileRead(de);
-			pInst->m_bAsyncActivating = (nSize == -1);
-			byte* pD = (byte*)rf->mfFileGetBuf(de);
-
-			if (pD && nSize > 0)
-			{
-				pData = std::unique_ptr<byte[]>(new byte[nSize]);
-				std::memcpy(pData.get(), pD, nSize);
-			}
-
-			rf->mfFileClose(de->GetName(), de->GetFlags());
-		}
-
-		if (pData && nSize > 0)
-		{
-			if (CParserBin::m_bEndians)
-				SwapEndian(*reinterpret_cast<SShaderCacheHeaderItem*>(pData.get()), eBigEndian);
-			pInst->m_DeviceObjectID = de->GetName().get();
-		}
-		if (i == CACHE_USER)
+		m_pCurInst->m_bAsyncActivating = false;
+		auto entity = mfShaderEntryFromCache(pFX, *de, rfOpenGuard, *cache);
+		if (cache->GetType() == cacheSource::user)
 			nFlags |= HWSG_CACHE_USER;
-		return pData;
+		return entity;
 	}
 	else
 	{
-		pInst->m_bAsyncActivating = bAsync;
-		return nullptr;
+		m_pCurInst->m_bAsyncActivating = bAsync;
+		return {};
 	}
 }
 
-bool CHWShader_D3D::mfAddCacheItem(SShaderCache* pCache, SShaderCacheHeaderItem* pItem, const byte* pData, int nLen, bool bFlush, CCryNameTSCRC Name)
+bool CHWShader_D3D::mfAddCacheItem(SDiskShaderCache* pCache, SShaderCacheHeaderItem* pItem, const byte* pData, int nLen, bool bFlush, CCryNameTSCRC Name)
 {
-	if (!pCache)
+	if (!pCache || !pCache->m_pRes)
+	{
+		CRY_ASSERT(false);
 		return false;
-	if (!pCache->m_pRes[CACHE_USER])
-		return false;
+	}
 
 	if (CRenderer::CV_r_shadersdebug == 3 || CRenderer::CV_r_shadersdebug == 4)
-		iLog->Log("---Cache: StoredToGlobal %s': 0x%x", pCache->m_pRes[CACHE_USER]->mfGetFileName(), Name.get());
+		CryLog("---Cache: StoredToGlobal %s': 0x%x", pCache->m_pRes->mfGetFileName(), Name.get());
 
 	pItem->m_CRC32 = CCrc32::Compute(pData, nLen);
 	//CryLog("Size: %d: CRC: %x", nLen, pItem->m_CRC32);
@@ -2642,23 +2254,28 @@ bool CHWShader_D3D::mfAddCacheItem(SShaderCache* pCache, SShaderCacheHeaderItem*
 	memcpy(&pNew[sizeof(SShaderCacheHeaderItem)], pData, nLen);
 
 	CDirEntry de(Name, nLen + sizeof(SShaderCacheHeaderItem), RF_COMPRESS | RF_TEMPDATA);
-	pCache->m_pRes[CACHE_USER]->mfFileAdd(&de);
-	SDirEntryOpen* pOE = pCache->m_pRes[CACHE_USER]->mfOpenEntry(de.GetName());
+
+	CResFileOpenScope rfOpenGuard(pCache->m_pRes);
+	rfOpenGuard.open(RA_WRITE | RA_READ | (CParserBin::m_bEndians ? RA_ENDIANS : 0), &gRenDev->m_cEF.m_ResLookupDataMan[static_cast<int>(pCache->GetType())], nullptr);
+	pCache->m_pRes->mfFileAdd(&de);
+	SDirEntryOpen* pOE = pCache->m_pRes->mfOpenEntry(de.GetName());
+	if (!pOE)
+	{
+		CRY_ASSERT_MESSAGE(false, "CHWShader_D3D::mfAddCacheItem(): Couldn't add/open cache entry");
+		delete[] pNew;
+		return false;
+	}
+
 	pOE->pData = pNew;
 	if (bFlush)
-	{
-		pCache->m_pRes[CACHE_USER]->mfFlush();
-
-		// Also evict in-memory image of user cache
-		pCache->m_pBinary[CACHE_USER] = nullptr;
-	}
+		pCache->m_pRes->mfFlush();
 
 	return true;
 }
 
 std::vector<SEmptyCombination> SEmptyCombination::s_Combinations;
 
-bool CHWShader_D3D::mfAddEmptyCombination(CShader* pSH, uint64 nRT, uint64 nGL, uint32 nLT, const SCacheCombination& cmbSaved)
+bool CHWShader_D3D::mfAddEmptyCombination(uint64 nRT, uint64 nGL, uint32 nLT, const SCacheCombination& cmbSaved)
 {
 	SEmptyCombination Comb;
 	Comb.nGLNew = m_nMaskGenShader;
@@ -2684,12 +2301,13 @@ bool CHWShader_D3D::mfAddEmptyCombination(CShader* pSH, uint64 nRT, uint64 nGL, 
 	return true;
 }
 
-bool CHWShader_D3D::mfStoreEmptyCombination(CShader* pSH, SEmptyCombination& Comb)
+bool CHWShader_D3D::mfStoreEmptyCombination(SEmptyCombination& Comb)
 {
-	if (!m_pGlobalCache || !m_pGlobalCache->m_pRes[CACHE_USER])
+	auto cache = QueryDiskCache(cacheSource::user);
+	if (!cache || !cache->m_pRes)
 		return false;
 
-	CResFile* rf = m_pGlobalCache->m_pRes[CACHE_USER];
+	CResFile* rf = cache->m_pRes;
 	char nameOrg[128];
 	char nameNew[128];
 	SShaderCombIdent Ident;
@@ -2698,7 +2316,7 @@ bool CHWShader_D3D::mfStoreEmptyCombination(CShader* pSH, SEmptyCombination& Com
 	Ident.m_LightMask = Comb.nLTNew;
 	Ident.m_MDMask = Comb.nMD;
 	Ident.m_MDVMask = Comb.nMDV;
-	SHWSInstance* pInstNew = mfGetInstance(pSH, Ident, 0);
+	SHWSInstance* pInstNew = mfGetInstance(Ident, 0);
 	mfGenName(pInstNew, nameNew, 128, 1);
 	CDirEntry* deNew = rf->mfGetEntry(nameNew);
 	//assert(deNew);
@@ -2710,7 +2328,7 @@ bool CHWShader_D3D::mfStoreEmptyCombination(CShader* pSH, SEmptyCombination& Com
 	Ident.m_LightMask = Comb.nLTOrg;
 	Ident.m_MDMask = Comb.nMD;
 	Ident.m_MDVMask = Comb.nMDV;
-	SHWSInstance* pInstOrg = mfGetInstance(pSH, Ident, 0);
+	SHWSInstance* pInstOrg = mfGetInstance(Ident, 0);
 	mfGenName(pInstOrg, nameOrg, 128, 1);
 	CDirEntry* deOrg = rf->mfGetEntry(nameOrg);
 	if (deOrg)
@@ -2719,7 +2337,7 @@ bool CHWShader_D3D::mfStoreEmptyCombination(CShader* pSH, SEmptyCombination& Com
 			deOrg->MarkNotSaved();
 
 		// Also evict in-memory image of user cache
-		m_pGlobalCache->m_pBinary[CACHE_USER] = nullptr;
+		InvalidateCache(cacheSource::user);
 
 		return true;
 	}
@@ -2738,16 +2356,18 @@ bool CHWShader_D3D::mfFlushCacheFile()
 	{
 		SHWSInstance* pInst = m_Insts[i];
 		if (pInst->m_Handle.m_bStatus == 2) // Fake
-		{
-			pInst->m_Handle.SetShader(NULL);
-		}
+			pInst->m_Handle = SD3DShaderHandle{};
 	}
 
-	// Also evict in-memory image of user cache
-	if (m_pGlobalCache)
-		m_pGlobalCache->m_pBinary[CACHE_USER] = nullptr;
+	// Flush
+	auto cache = QueryDiskCache(cacheSource::user);
+	if (cache && cache->m_pRes)
+	{
+		cache->m_pRes->mfFlush();	
+		return true;
+	}
 
-	return m_pGlobalCache && m_pGlobalCache->m_pRes[CACHE_USER] && m_pGlobalCache->m_pRes[CACHE_USER]->mfFlush();
+	return false;
 }
 
 struct SData
@@ -2767,37 +2387,36 @@ struct SData
 };
 #if CRY_PLATFORM_DESKTOP
 // Remove shader duplicates
-bool CHWShader::mfOptimiseCacheFile(SShaderCache* pCache, bool bForce, SOptimiseStats* pStats)
+bool SDiskShaderCache::mfOptimiseCacheFile(SOptimiseStats* pStats)
 {
-	CResFile* pRes = pCache->m_pRes[CACHE_USER];
-	pRes->mfFlush();
-	ResDir* Dir = pRes->mfGetDirectory();
+	if (!m_pRes)
+		return false;
+
+	CResFileOpenScope rfOpenGuard(m_pRes);
+	const auto openResult = rfOpenGuard.open(RA_READ | (CParserBin::m_bEndians ? RA_ENDIANS : 0), &gRenDev->m_cEF.m_ResLookupDataMan[static_cast<int>(cacheType)], nullptr);
+	if (!openResult)
+		return false;
+
+	ResDir* Dir = m_pRes->mfGetDirectory();
 	uint32 i, j;
-
-#ifdef _DEBUG
-	mfValidateDirEntries(pRes);
-	mfValidateTokenData(pRes);
-#endif
-
 	std::vector<SData> Data;
 
 	if (pStats)
 		pStats->nEntries += Dir->size();
 
-	for (i = 0; i < Dir->size(); i++)
+	for (CDirEntry& DE : *Dir)
 	{
-		CDirEntry* pDE = &(*Dir)[i];
-		if (!pDE->IsValid())
+		if (!DE.IsValid())
 			continue;
 
-		if (pDE->GetFlags() & RF_RES_$)
+		if (DE.GetFlags() & RF_RES_$)
 		{
-			if (pDE->GetName() == CShaderMan::s_cNameHEAD)
+			if (DE.GetName() == CShaderMan::s_cNameHEAD)
 				continue;
 
 			SData d;
 			d.nSizeComp = d.nSizeDecomp = 0;
-			d.pData = pRes->mfFileReadCompressed(pDE, d.nSizeDecomp, d.nSizeComp);
+			d.pData = m_pRes->mfFileReadCompressed(&DE, d.nSizeDecomp, d.nSizeComp);
 			assert(d.pData && d.nSizeComp && d.nSizeDecomp);
 			if (!d.pData || !d.nSizeComp || !d.nSizeDecomp)
 				continue;
@@ -2805,24 +2424,24 @@ bool CHWShader::mfOptimiseCacheFile(SShaderCache* pCache, bool bForce, SOptimise
 				pStats->nTokenDataSize += d.nSizeDecomp;
 			d.nOffset = 0;
 			d.needsProcessing = false;
-			d.Name = pDE->GetName();
-			d.flags = pDE->GetFlags();
+			d.Name = DE.GetName();
+			d.flags = DE.GetFlags();
 			Data.push_back(d);
 		}
 		else
 		{
 			SData d;
-			d.flags = pDE->GetFlags();
+			d.flags = DE.GetFlags();
 			d.nSizeComp = d.nSizeDecomp = 0;
-			d.pData = pRes->mfFileReadCompressed(pDE, d.nSizeDecomp, d.nSizeComp);
+			d.pData = m_pRes->mfFileReadCompressed(&DE, d.nSizeDecomp, d.nSizeComp);
 			assert(d.pData && d.nSizeComp && d.nSizeDecomp);
 			if (!d.pData || !d.nSizeComp || !d.nSizeDecomp)
 				continue;
-			d.nOffset = pDE->GetOffset();
+			d.nOffset = DE.GetOffset();
 			d.needsProcessing = true;
-			d.Name = pDE->GetName();
+			d.Name = DE.GetName();
 			Data.push_back(d);
-			pRes->mfCloseEntry(pDE->GetName(), pDE->GetFlags());
+			m_pRes->mfCloseEntry(DE.GetName(), DE.GetFlags());
 		}
 	}
 
@@ -2862,25 +2481,23 @@ bool CHWShader::mfOptimiseCacheFile(SShaderCache* pCache, bool bForce, SOptimise
 			iLog->Log(" Forcing optimise for deterministic order...");
 		}
 
-		iLog->Log(" Optimising shaders resource '%s' (%" PRISIZE_T " items)...", pCache->m_Name.c_str(), Data.size() - 1);
+		iLog->Log(" Optimising shaders resource '%s' (%" PRISIZE_T " items)...", m_pRes->mfGetFileName(), Data.size() - 1);
 
-		pRes->mfClose();
-		pRes->mfOpen(RA_CREATE | (CParserBin::m_bEndians ? RA_ENDIANS : 0), &gRenDev->m_cEF.m_ResLookupDataMan[CACHE_USER]);
+		m_pRes->mfClose();
+		m_pRes->mfOpen(RA_CREATE | (CParserBin::m_bEndians ? RA_ENDIANS : 0), &gRenDev->m_cEF.m_ResLookupDataMan[static_cast<int>(GetType())]);
 
 		float fVersion = FX_CACHE_VER;
 		uint32 nMinor = (int)(((float)fVersion - (float)(int)fVersion) * 10.1f);
 		uint32 nMajor = (int)fVersion;
 
-		SResFileLookupData* pLookupCache = pCache->m_pRes[CACHE_USER]->GetLookupData(false, 0, 0);
-		CRY_ASSERT(pLookupCache != NULL);
-
+		SResFileLookupData* pLookupCache = m_pRes->GetLookupData();
 		if (pLookupCache == NULL || pLookupCache->m_CacheMajorVer != nMajor || pLookupCache->m_CacheMinorVer != nMinor)
 		{
 			CRY_ASSERT_MESSAGE(pLookupCache == NULL, "Losing ShaderIdents by recreating lookupdata cache");
-			pLookupCache = pRes->GetLookupData(true, 0, (float)FX_CACHE_VER);
+			m_pRes->StoreLookupData(0, (float)FX_CACHE_VER);
 		}
 
-		pRes->mfFlush();
+		m_pRes->mfFlush();
 
 		if (CRenderer::CV_r_shaderscachedeterministic)
 			std::sort(Data.begin(), Data.end());
@@ -2893,7 +2510,7 @@ bool CHWShader::mfOptimiseCacheFile(SShaderCache* pCache, bool bForce, SOptimise
 			if (pD->flags & RF_RES_$)
 			{
 				de = CDirEntry(pD->Name, pD->nSizeDecomp, pD->flags);
-				SDirEntryOpen* pOE = pRes->mfOpenEntry(pD->Name);
+				SDirEntryOpen* pOE = m_pRes->mfOpenEntry(pD->Name);
 				pOE->pData = pD->pData;
 			}
 			else if (pD->flags & RF_DUPLICATE)
@@ -2914,7 +2531,7 @@ bool CHWShader::mfOptimiseCacheFile(SShaderCache* pCache, bool bForce, SOptimise
 				{
 					de = CDirEntry(pD->Name, pD->nSizeComp + 4, pD->nOffset, pD->flags | RF_TEMPDATA | RF_COMPRESS | RF_COMPRESSED);
 
-					SDirEntryOpen* pOE = pRes->mfOpenEntry(pD->Name);
+					SDirEntryOpen* pOE = m_pRes->mfOpenEntry(pD->Name);
 					byte* pData = new byte[de.GetSize()];
 					uint32 nSize = pD->nSizeDecomp;
 					memcpy(pData, &nSize, sizeof(uint32));
@@ -2923,7 +2540,7 @@ bool CHWShader::mfOptimiseCacheFile(SShaderCache* pCache, bool bForce, SOptimise
 					SAFE_DELETE_ARRAY(pD->pData);
 				}
 			}
-			pRes->mfFileAdd(&de);
+			m_pRes->mfFileAdd(&de);
 		}
 	}
 
@@ -2931,12 +2548,7 @@ bool CHWShader::mfOptimiseCacheFile(SShaderCache* pCache, bool bForce, SOptimise
 		iLog->Log("  -- Removed %" PRISIZE_T " duplicated shaders", Data.size() - nOutFiles);
 
 	Data.clear();
-	int nSizeDir = pRes->mfFlush();
-	//int nSizeCompr = pRes->mfFlush();
-
-	#ifdef _DEBUG
-	mfValidateTokenData(pRes);
-	#endif
+	int nSizeDir = m_pRes->mfFlush();
 
 	if (pStats)
 		pStats->nDirDataSize += nSizeDir;
@@ -2948,7 +2560,7 @@ bool CHWShader::mfOptimiseCacheFile(SShaderCache* pCache, bool bForce, SOptimise
 	}
 
 	if (pStats)
-		CryLog("  -- Shader cache '%s' stats: Entries: %d, Unique Entries: %d, Size: %.3f Mb, Compressed Size: %.3f Mb, Token data size: %3f Mb, Directory Size: %.3f Mb", pCache->m_Name.c_str(), pStats->nEntries, pStats->nUniqueEntries, pStats->nSizeUncompressed / 1024.0f / 1024.0f, pStats->nSizeCompressed / 1024.0f / 1024.0f, pStats->nTokenDataSize / 1024.0f / 1024.0f, pStats->nDirDataSize / 1024.0f / 1024.0f);
+		CryLog("  -- Shader cache '%s' stats: Entries: %d, Unique Entries: %d, Size: %.3f Mb, Compressed Size: %.3f Mb, Token data size: %3f Mb, Directory Size: %.3f Mb", m_pRes->mfGetFileName(), pStats->nEntries, pStats->nUniqueEntries, pStats->nSizeUncompressed / 1024.0f / 1024.0f, pStats->nSizeCompressed / 1024.0f / 1024.0f, pStats->nTokenDataSize / 1024.0f / 1024.0f, pStats->nDirDataSize / 1024.0f / 1024.0f);
 
 	return true;
 }
@@ -2965,203 +2577,6 @@ int __cdecl sSort(const VOID* arg1, const VOID* arg2)
 	if (ti1->GetName() == ti2->GetName())
 		return 0;
 	return 1;
-}
-
-bool CHWShader::_OpenCacheFile(float fVersion, SShaderCache* pCache, CHWShader* pSH, bool bCheckValid, uint32 CRC32, int nCache, CResFile* pRF, bool bReadOnly)
-{
-	assert(nCache == CACHE_USER || nCache == CACHE_READONLY);
-
-	bool bValid = true;
-	CHWShader_D3D* pSHHW = (CHWShader_D3D*)pSH;
-	int nRes = pRF->mfOpen(RA_READ | (CParserBin::m_bEndians ? RA_ENDIANS : 0), &gRenDev->m_cEF.m_ResLookupDataMan[nCache], (nCache == CACHE_READONLY && pCache->m_pStreamInfo) ? pCache->m_pStreamInfo : NULL);
-	if (nRes == 0)
-	{
-		pRF->mfClose();
-		bValid = false;
-	}
-	else if (nRes > 0)
-	{
-		if (bValid)
-		{
-			SResFileLookupData* pLookup = pRF->GetLookupData(false, 0, 0);
-			if (!pLookup)
-				bValid = false;
-			else if (bCheckValid)
-			{
-				if (fVersion && (pLookup->m_CacheMajorVer != (int)fVersion || pLookup->m_CacheMinorVer != (int)(((float)fVersion - (float)(int)fVersion) * 10.1f)))
-					bValid = false;
-				if (!bValid && (CRenderer::CV_r_shadersdebug == 2 || nCache == CACHE_READONLY))
-				{
-					LogWarningEngineOnly("WARNING: Shader cache '%s' version mismatch (Cache: %d.%d, Expected: %.1f)", pRF->mfGetFileName(), pLookup->m_CacheMajorVer, pLookup->m_CacheMinorVer, fVersion);
-				}
-				if (pSH)
-				{
-					if (bValid && pLookup->m_CRC32 != pSHHW->m_CRC32)
-					{
-						bValid = false;
-						if (CRenderer::CV_r_shadersdebug == 2 && (CRenderer::CV_r_shadersdebug == 2 || nCache == CACHE_READONLY))
-						{
-							LogWarningEngineOnly("WARNING: Shader cache '%s' CRC mismatch", pRF->mfGetFileName());
-						}
-					}
-				}
-			}
-		}
-
-		if (nCache == CACHE_USER)
-		{
-			pRF->mfClose();
-			if (bValid)
-			{
-				int nAcc = CRenderer::CV_r_shadersAllowCompilation != 0 ? (RA_READ | RA_WRITE) : RA_READ;
-				if (!pRF->mfOpen(nAcc | (CParserBin::m_bEndians ? RA_ENDIANS : 0), &gRenDev->m_cEF.m_ResLookupDataMan[nCache]))
-				{
-					pRF->mfClose();
-					bValid = false;
-				}
-			}
-		}
-	}
-	if (!bValid && bCheckValid)
-	{
-		if (nCache == CACHE_USER && !bReadOnly)
-		{
-			if (!pRF->mfOpen(RA_CREATE | (CParserBin::m_bEndians ? RA_ENDIANS : 0), &gRenDev->m_cEF.m_ResLookupDataMan[nCache]))
-			{
-				pRF->mfClose();
-				SAFE_DELETE(pRF);
-				return false;
-			}
-
-			SResFileLookupData* pLookup = pRF->GetLookupData(true, CRC32, (float)FX_CACHE_VER);
-			if (pSHHW)
-				pRF->mfFlush();
-			pCache->m_bNeedPrecache = true;
-			bValid = true;
-		}
-		else
-		{
-			SAFE_DELETE(pRF);
-		}
-	}
-	pCache->m_pRes[nCache] = pRF;
-	pCache->m_bReadOnly[nCache] = bReadOnly;
-
-#ifdef _DEBUG
-	mfValidateTokenData(pRF);
-#endif
-
-	return bValid;
-}
-
-bool CHWShader::mfOpenCacheFile(const char* szName, float fVersion, SShaderCache* pCache, CHWShader* pSH, bool bCheckValid, uint32 CRC32, bool bReadOnly)
-{
-	bool bValidRO = false;
-	bool bValidUser = true;
-	// don't load the readonly cache, when shaderediting is true
-	if (!CRenderer::CV_r_shadersediting && !pCache->m_pRes[CACHE_READONLY])
-	{
-		stack_string szEngine = stack_string("%ENGINE%/") + stack_string(szName);
-		CResFile* rfRO = new CResFile(szEngine);
-		bool bRO = bReadOnly;
-		if (!CRenderer::CV_r_shadersAllowCompilation)
-			bRO = true;
-		bValidRO = _OpenCacheFile(fVersion, pCache, pSH, bCheckValid, CRC32, CACHE_READONLY, rfRO, bRO);
-	}
-	if (!CRenderer::CV_r_shadersAllowCompilation)
-	{
-		assert(bReadOnly);
-	}
-	if ((!bReadOnly || gRenDev->IsShaderCacheGenMode()) && !pCache->m_pRes[CACHE_USER])
-	{
-		stack_string szUser = stack_string(gRenDev->m_cEF.m_szUserPath.c_str()) + stack_string(szName);
-		CResFile* rfUser = new CResFile(szUser.c_str());
-		bValidUser = _OpenCacheFile(fVersion, pCache, pSH, bCheckValid, CRC32, CACHE_USER, rfUser, bReadOnly);
-	}
-
-	return (bValidRO || bValidUser);
-}
-
-SShaderCache* CHWShader::mfInitCache(const char* name, CHWShader* pSH, bool bCheckValid, uint32 CRC32, bool bReadOnly, bool bAsync)
-{
-	//	LOADING_TIME_PROFILE_SECTION(iSystem);
-
-	CHWShader_D3D* pSHHW = (CHWShader_D3D*)pSH;
-	
-	if (!CRenderer::CV_r_shadersAllowCompilation)
-		bCheckValid = false;
-
-	if (CRenderer::CV_r_shadersediting)
-		bReadOnly = false;
-
-	if (!name)
-	{
-		char namedst[256];
-		pSHHW->mfGetDstFileName(pSHHW->m_pCurInst, pSHHW, namedst, 256, 0);
-		PathUtil::ReplaceExtension(namedst, "fxcb");
-		name = namedst;
-	}
-
-	SShaderCache* pCache = NULL;
-	FXShaderCacheItor it = m_ShaderCache.find(CCryNameR(name));
-	if (it != m_ShaderCache.end())
-	{
-		pCache = it->second;
-		pCache->AddRef();
-		if (pSHHW)
-		{
-			if (bCheckValid)
-			{
-				int nCache[2] = { -1, -1 };
-				if (!CRenderer::CV_r_shadersAllowCompilation)
-					nCache[0] = CACHE_READONLY;
-				else
-				{
-					nCache[0] = CACHE_USER;
-					nCache[1] = CACHE_READONLY;
-				}
-				bool bValid;
-				for (int i = 0; i < 2; i++)
-				{
-					if (nCache[i] < 0 || !pCache->m_pRes[i])
-						continue;
-					CResFile* pRF = pCache->m_pRes[i];
-					SResFileLookupData* pLookup = pRF->GetLookupData(false, 0, (float)FX_CACHE_VER);
-					bValid = (pLookup && pLookup->m_CRC32 == CRC32);
-					if (!bValid)
-					{
-						SAFE_DELETE(pCache->m_pRes[i]);
-					}
-				}
-				bValid = true;
-				if (!CRenderer::CV_r_shadersAllowCompilation && !pCache->m_pRes[CACHE_READONLY])
-					bValid = false;
-				else
-				{
-					if (bReadOnly && (!pCache->m_pRes[CACHE_READONLY] || !pCache->m_pRes[CACHE_USER]))
-						bValid = false;
-					if (!bReadOnly && !pCache->m_pRes[CACHE_USER])
-						bValid = false;
-				}
-				if (!bValid)
-				{
-					mfOpenCacheFile(name, (float)FX_CACHE_VER, pCache, pSH, bCheckValid, CRC32, bReadOnly);
-				}
-			}
-		}
-	}
-	else
-	{
-		pCache = new SShaderCache;
-		if (bAsync)
-			pCache->m_pStreamInfo = new SResStreamInfo(pCache);
-		pCache->m_nPlatform = CParserBin::m_nPlatform;
-		pCache->m_Name = name;
-		mfOpenCacheFile(name, (float)FX_CACHE_VER, pCache, pSH, bCheckValid, CRC32, bReadOnly);
-		m_ShaderCache.insert(FXShaderCacheItor::value_type(CCryNameR(name), pCache));
-	}
-
-	return pCache;
 }
 
 byte* CHWShader_D3D::mfBindsToCache(SHWSInstance* pInst, std::vector<SCGBind>* Binds, int nParams, byte* pP)
@@ -3185,13 +2600,10 @@ byte* CHWShader_D3D::mfBindsToCache(SHWSInstance* pInst, std::vector<SCGBind>* B
 	return pP;
 }
 
-byte* CHWShader_D3D::mfBindsFromCache(std::vector<SCGBind>*& Binds, int nParams, byte* pP)
+const byte* CHWShader_D3D::mfBindsFromCache(std::vector<SCGBind>& Binds, int nParams, const byte* pP)
 {
-	int i;
-	for (i = 0; i < nParams; i++)
+	for (int i = 0; i < nParams; i++)
 	{
-		if (!Binds)
-			Binds = new std::vector<SCGBind>;
 		SCGBind cgb;
 		SShaderCacheHeaderItemVar* pVar = (SShaderCacheHeaderItemVar*)pP;
 
@@ -3207,7 +2619,7 @@ byte* CHWShader_D3D::mfBindsFromCache(std::vector<SCGBind>*& Binds, int nParams,
 			SwapEndian(dwBind, eBigEndian);
 		cgb.m_dwBind = dwBind;
 
-		Binds->push_back(cgb);
+		Binds.push_back(cgb);
 		pP += offsetof(SShaderCacheHeaderItemVar, m_Name) + strlen(pVar->m_Name) + 1;
 	}
 	return pP;
@@ -3224,7 +2636,7 @@ byte* CHWShader::mfIgnoreBindsFromCache(int nParams, byte* pP)
 	return pP;
 }
 
-bool CHWShader_D3D::mfUploadHW(SHWSInstance* pInst, byte* pBuf, uint32 nSize, CShader* pSH, uint32 nFlags)
+bool CHWShader_D3D::mfUploadHW(SHWSInstance* pInst, const byte* pBuf, uint32 nSize, CShader* pSH, uint32 nFlags)
 {
 	PROFILE_FRAME(Shader_mfUploadHW);
 
@@ -3235,9 +2647,53 @@ bool CHWShader_D3D::mfUploadHW(SHWSInstance* pInst, byte* pBuf, uint32 nSize, CS
 
 	HRESULT hr = S_OK;
 	if (!pInst->m_Handle.m_pShader)
-		pInst->m_Handle.SetShader(new SD3DShader);
+	{
+		d3dShaderHandleType* handle = nullptr;
 
-	assert(pInst->m_Handle.m_pShader != nullptr);
+		if (m_eSHClass == eHWSC_Pixel)
+			hr = (handle = GetDeviceObjectFactory().CreatePixelShader(pBuf, nSize)) ? S_OK : E_FAIL;
+		else if (m_eSHClass == eHWSC_Vertex)
+			hr = (handle = GetDeviceObjectFactory().CreateVertexShader(pBuf, nSize)) ? S_OK : E_FAIL;
+		else if (m_eSHClass == eHWSC_Geometry)
+		{
+#if 1 // use 0 for FastGS emulation mode
+			if (m_Flags & HWSG_GS_MULTIRES)
+			{
+#if defined(USE_NV_API) && (CRY_RENDERER_DIRECT3D >= 110) && (CRY_RENDERER_DIRECT3D < 120)
+				if (CVrProjectionManager::IsMultiResEnabledStatic())
+				{
+					NvAPI_D3D11_CREATE_FASTGS_EXPLICIT_DESC FastGSArgs = { NVAPI_D3D11_CREATEFASTGSEXPLICIT_VER, NV_FASTGS_USE_VIEWPORT_MASK };
+					NvAPI_Status Status = NvAPI_D3D11_CreateFastGeometryShaderExplicit(gcpRendD3D->GetDevice().GetRealDevice(), alias_cast<DWORD*>(pBuf), nSize, NULL, &FastGSArgs, alias_cast<ID3D11GeometryShader**>(&handle));
+					hr = (Status == NVAPI_OK) ? S_OK : E_FAIL;
+				}
+				else
+#endif
+				{
+					pInst->m_Handle.m_pShader->m_bDisabled = true;
+					handle = nullptr;
+					hr = S_OK;
+				}
+			}
+			else
+#endif
+			{
+				hr = (handle = GetDeviceObjectFactory().CreateGeometryShader(pBuf, nSize)) ? S_OK : E_FAIL;
+			}
+		}
+		else if (m_eSHClass == eHWSC_Hull)
+			hr = (handle = GetDeviceObjectFactory().CreateHullShader(pBuf, nSize)) ? S_OK : E_FAIL;
+		else if (m_eSHClass == eHWSC_Compute)
+			hr = (handle = GetDeviceObjectFactory().CreateComputeShader(pBuf, nSize)) ? S_OK : E_FAIL;
+		else if (m_eSHClass == eHWSC_Domain)
+			hr = (handle = GetDeviceObjectFactory().CreateDomainShader(pBuf, nSize)) ? S_OK : E_FAIL;
+		else
+			assert(0);
+
+		if (handle && hr == S_OK)
+			pInst->m_Handle = SD3DShaderHandle(handle, m_eSHClass, nSize);
+	}
+
+	CRY_ASSERT_MESSAGE(pInst->m_Handle.m_pShader && pInst->m_Handle.m_pShader->GetHandle(), "Shader creation failed");
 
 	if ((m_eSHClass == eHWSC_Vertex) && (!(nFlags & HWSF_PRECACHE)) && !pInst->m_bFallback)
 		mfUpdateFXVertexFormat(pInst, pSH);
@@ -3248,53 +2704,12 @@ bool CHWShader_D3D::mfUploadHW(SHWSInstance* pInst, byte* pBuf, uint32 nSize, CS
 	else
 		s_nDeviceVSDataSize += nSize;
 
-	if (m_eSHClass == eHWSC_Pixel)
-		hr = (pInst->m_Handle.m_pShader->m_pHandle = GetDeviceObjectFactory().CreatePixelShader(pBuf, nSize)) ? S_OK : E_FAIL;
-	else if (m_eSHClass == eHWSC_Vertex)
-		hr = (pInst->m_Handle.m_pShader->m_pHandle = GetDeviceObjectFactory().CreateVertexShader(pBuf, nSize)) ? S_OK : E_FAIL;
-	else if (m_eSHClass == eHWSC_Geometry)
-		{
-#if 1 // use 0 for FastGS emulation mode
-			if (m_Flags & HWSG_GS_MULTIRES)
-			{
-#if defined(USE_NV_API) && (CRY_RENDERER_DIRECT3D >= 110) && (CRY_RENDERER_DIRECT3D < 120)
-				if (CVrProjectionManager::IsMultiResEnabledStatic())
-				{
-					NvAPI_D3D11_CREATE_FASTGS_EXPLICIT_DESC FastGSArgs = { NVAPI_D3D11_CREATEFASTGSEXPLICIT_VER, NV_FASTGS_USE_VIEWPORT_MASK };
-					NvAPI_Status Status = NvAPI_D3D11_CreateFastGeometryShaderExplicit(gcpRendD3D->GetDevice().GetRealDevice(), alias_cast<DWORD*>(pBuf), nSize, NULL, &FastGSArgs, alias_cast<ID3D11GeometryShader**>(&pInst->m_Handle.m_pShader->m_pHandle));
-					hr = (Status == NVAPI_OK) ? S_OK : E_FAIL;
-				}
-				else
-#endif
-				{
-					pInst->m_Handle.m_pShader->m_bDisabled = true;
-					pInst->m_Handle.m_pShader->m_pHandle = nullptr;
-					hr = S_OK;
-				}
-			}
-			else
-#endif
-			{
-				hr = (pInst->m_Handle.m_pShader->m_pHandle = GetDeviceObjectFactory().CreateGeometryShader(pBuf, nSize)) ? S_OK : E_FAIL;
-			}
-		}
-	else if (m_eSHClass == eHWSC_Hull)
-		hr = (pInst->m_Handle.m_pShader->m_pHandle = GetDeviceObjectFactory().CreateHullShader(pBuf, nSize)) ? S_OK : E_FAIL;
-	else if (m_eSHClass == eHWSC_Compute)
-		hr = (pInst->m_Handle.m_pShader->m_pHandle = GetDeviceObjectFactory().CreateComputeShader(pBuf, nSize)) ? S_OK : E_FAIL;
-	else if (m_eSHClass == eHWSC_Domain)
-		hr = (pInst->m_Handle.m_pShader->m_pHandle = GetDeviceObjectFactory().CreateDomainShader(pBuf, nSize)) ? S_OK : E_FAIL;
-	else
-	{
-		assert(0);
-	}
-
-	if (pInst->m_Handle.m_pShader->m_pHandle)
+	if (pInst->m_Handle.m_pShader->GetHandle())
 	{
 	#if defined(ORBIS_GPU_DEBUGGER_SUPPORT) && !CRY_RENDERER_GNM
 		char name[1024];
 		cry_sprintf(name, "%s_%s(LT%x)@(RT%llx)(MD%x)(MDV%x)(GL%llx)(PSS%llx)", pSH->GetName(), m_EntryFunc.c_str(), pInst->m_Ident.m_LightMask, pInst->m_Ident.m_RTMask, pInst->m_Ident.m_MDMask, pInst->m_Ident.m_MDVMask, pInst->m_Ident.m_GLMask, pInst->m_Ident.m_pipelineState.opaque);
-		((CCryDXOrbisShader*)pInst->m_Handle.m_pShader->m_pHandle)->RegisterWithGPUDebugger(name);
+		((CCryDXOrbisShader*)pInst->m_Handle.m_pShader->GetHandle())->RegisterWithGPUDebugger(name);
 	#endif
 
 		// Assign name to Shader for enhanced debugging
@@ -3303,12 +2718,12 @@ bool CHWShader_D3D::mfUploadHW(SHWSInstance* pInst, byte* pBuf, uint32 nSize, CS
 		sprintf(name, "%s_%s(LT%x)@(RT%llx)(MD%x)(MDV%x)(GL%llx)(PSS%llx)", pSH->GetName(), m_EntryFunc.c_str(), pInst->m_Ident.m_LightMask, pInst->m_Ident.m_RTMask, pInst->m_Ident.m_MDMask, pInst->m_Ident.m_MDVMask, pInst->m_Ident.m_GLMask, pInst->m_Ident.m_pipelineState.opaque);
 		#if CRY_PLATFORM_WINDOWS
 			#if CRY_RENDERER_DIRECT3D
-				((ID3D11DeviceChild*)pInst->m_Handle.m_pShader->m_pHandle)->SetPrivateData(WKPDID_D3DDebugObjectName, strlen(name), name);
+				((ID3D11DeviceChild*)pInst->m_Handle.m_pShader->GetHandle())->SetPrivateData(WKPDID_D3DDebugObjectName, strlen(name), name);
 			#elif CRY_RENDERER_VULKAN
-				reinterpret_cast<NCryVulkan::CShader*>(pInst->m_Handle.m_pShader->m_pHandle)->DebugSetName(name);
+				reinterpret_cast<NCryVulkan::CShader*>(pInst->m_Handle.m_pShader->GetHandle())->DebugSetName(name);
 			#endif
 		#elif CRY_PLATFORM_ORBIS && !CRY_RENDERER_GNM		
-			((CCryDXOrbisShader*)pInst->m_Handle.m_pShader->m_pHandle)->DebugSetName(name);
+			((CCryDXOrbisShader*)pInst->m_Handle.m_pShader->GetHandle())->DebugSetName(name);
 		#endif
 	#endif
 	}
@@ -3321,7 +2736,7 @@ bool CHWShader_D3D::mfUploadHW(D3DBlob* pShader, SHWSInstance* pInst, CShader* p
 	bool bResult = true;
 	if (m_eSHClass == eHWSC_Vertex && !pInst->m_bFallback)
 		mfUpdateFXVertexFormat(pInst, pSH);
-	if (pShader && !(m_Flags & HWSG_PRECACHEPHASE))
+	if (pShader)
 	{
 		DWORD* pCode = (DWORD*)pShader->GetBufferPointer();
 		if (gcpRendD3D->m_cEF.m_nCombinationsProcess >= 0)
@@ -3358,46 +2773,34 @@ bool CHWShader_D3D::mfUploadHW(D3DBlob* pShader, SHWSInstance* pInst, CShader* p
 	return bResult;
 }
 
-bool CHWShader_D3D::mfActivateCacheItem(CShader* pSH, SShaderCacheHeaderItem* pItem, uint32 nSize, uint32 nFlags)
+bool CHWShader_D3D::mfActivateCacheItem(CShader* pSH, const SDeviceShaderEntry* cacheEntry, uint32 nFlags)
 {
-	SHWSInstance* pInst = m_pCurInst;
-	byte* pData = (byte*)pItem;
-	pData += sizeof(SShaderCacheHeaderItem);
-	byte* pBuf = pData;
-	std::vector<SCGBind>* pInstBinds = NULL;
-	pInst->Release(m_pDevCache, false);
-	pBuf = mfBindsFromCache(pInstBinds, pItem->m_nInstBinds, pBuf);
-	nSize -= (uint32)(pBuf - (byte*)pItem);
-	pInst->m_eClass = (EHWShaderClass)pItem->m_Class;
-	pInst->m_nVertexFormat = pItem->m_nVertexFormat;
-	pInst->m_nInstructions = pItem->m_nInstructions;
-	pInst->m_VStreamMask_Decl = pItem->m_StreamMask_Decl;
-	pInst->m_VStreamMask_Stream = pItem->m_StreamMask_Stream;
 	bool bResult = true;
-	SD3DShader* pHandle = NULL;
-	SShaderDevCache* pCache = m_pDevCache;
-	if (!(nFlags & HWSG_CACHE_USER))
+
+	SHWSInstance* pInst = m_pCurInst;
+
+	pInst->m_eClass = (EHWShaderClass)cacheEntry->header.m_Class;
+	pInst->m_nVertexFormat = cacheEntry->header.m_nVertexFormat;
+	pInst->m_nInstructions = cacheEntry->header.m_nInstructions;
+	pInst->m_VStreamMask_Decl = cacheEntry->header.m_StreamMask_Decl;
+	pInst->m_VStreamMask_Stream = cacheEntry->header.m_StreamMask_Stream;
+#if CRY_RENDERER_VULKAN
+	pInst->m_VSInputStreams = cacheEntry->m_VSInputStreams;
+#endif
+
+	pInst->m_pBindVars = cacheEntry->bindVars;
+
 	{
-		if (pCache)
-		{
-			FXDeviceShaderItor it = pCache->m_DeviceShaders.find(pInst->m_DeviceObjectID);
-			if (it != pCache->m_DeviceShaders.end())
-				pHandle = it->second;
-		}
-	}
-	HRESULT hr = S_OK;
-	if (pHandle)
-	{
-		pInst->m_Handle.SetShader(pHandle);
-		pInst->m_Handle.AddRef();
+		auto handle = cacheEntry->shader;
+		pInst->m_Handle = SD3DShaderHandle(std::move(handle));
 
 #if CRY_PLATFORM_ORBIS || CRY_PLATFORM_DURANGO || CRY_RENDERER_VULKAN
 		if (m_eSHClass == eHWSC_Vertex)
 		{
 			D3DBlob* pS = NULL;
-			D3DCreateBlob(nSize, (D3DBlob**)&pS);
+			D3DCreateBlob(cacheEntry->m_VertexShaderBinarySize, (D3DBlob**)&pS);
 			DWORD* pBuffer = (DWORD*)pS->GetBufferPointer();
-			memcpy(pBuffer, pBuf, nSize);
+			memcpy(pBuffer, cacheEntry->m_pVertexShaderBinary.get(), cacheEntry->m_VertexShaderBinarySize);
 			mfVertexFormat(pInst, this, pS, nullptr);
 			SAFE_RELEASE(pS);
 		}
@@ -3405,57 +2808,14 @@ bool CHWShader_D3D::mfActivateCacheItem(CShader* pSH, SShaderCacheHeaderItem* pI
 		if ((m_eSHClass == eHWSC_Vertex) && (!(nFlags & HWSF_PRECACHE)) && !pInst->m_bFallback)
 			mfUpdateFXVertexFormat(pInst, pSH);
 	}
-	else
-	{
-		if (gcpRendD3D->m_cEF.m_nCombinationsProcess > 0)
-		{
-			pInst->m_Handle.SetFake();
-		}
-		else
-		{
-#if CRY_PLATFORM_ORBIS || CRY_PLATFORM_DURANGO || CRY_RENDERER_VULKAN
-			if (m_eSHClass == eHWSC_Vertex)
-			{
-				D3DBlob* pS = NULL;
-				D3DCreateBlob(nSize, (D3DBlob**)&pS);
-				DWORD* pBuffer = (DWORD*)pS->GetBufferPointer();
-				memcpy(pBuffer, pBuf, nSize);
-				mfVertexFormat(pInst, this, pS, nullptr);
-				SAFE_RELEASE(pS);
-			}
-#endif
 
-			bResult = mfUploadHW(pInst, pBuf, nSize, pSH, nFlags);
-		}
-		if (!bResult)
-		{
-			SAFE_DELETE(pInstBinds);
-			assert(!"Shader creation error");
-			iLog->Log("WARNING: cannot create shader '%s' (FX: %s)", m_EntryFunc.c_str(), GetName());
-			return true;
-		}
-		pCache->m_DeviceShaders.insert(FXDeviceShaderItor::value_type(pInst->m_DeviceObjectID, pInst->m_Handle.m_pShader));
-	}
-	void* pConstantTable = NULL;
-	void* pShaderReflBuf = NULL;
-	hr = D3DReflect(pBuf, nSize, IID_ID3D11ShaderReflection, &pShaderReflBuf);
-	ID3D11ShaderReflection* pShaderReflection = (ID3D11ShaderReflection*)pShaderReflBuf;
-	if (SUCCEEDED(hr))
-		pConstantTable = (void*)pShaderReflection;
-	if (m_eSHClass == eHWSC_Vertex || gRenDev->IsEditorMode())
+	if (m_eSHClass == eHWSC_Vertex)
 	{
-		pInst->m_Shader.m_pShaderData = new byte[nSize];
-		pInst->m_Shader.m_nDataSize = nSize;
-		memcpy(pInst->m_Shader.m_pShaderData, pBuf, nSize);
+		pInst->m_Shader.m_pShaderData = cacheEntry->m_pVertexShaderBinary.get();
+		pInst->m_Shader.m_nDataSize = cacheEntry->m_VertexShaderBinarySize;
 	}
-	assert(hr == S_OK);
-	bResult &= (hr == S_OK);
-	if (pConstantTable)
-		mfCreateBinds(pInst, pConstantTable, pBuf, nSize);
 
-	mfGatherFXParameters(pInst, &pInst->m_pBindVars, pInstBinds, this, 0, pSH);
-	SAFE_DELETE(pInstBinds);
-	SAFE_RELEASE(pShaderReflection);
+	mfGatherFXParameters(pInst, pInst->m_pBindVars, this, 0, pSH);
 
 	return bResult;
 }
@@ -3466,16 +2826,10 @@ bool CHWShader_D3D::mfActivateCacheItem(CShader* pSH, SShaderCacheHeaderItem* pI
    CHWShader_D3D::SHWSInstance g_Inst0;
    CHWShader_D3D *g_pSH;*/
 
-bool CHWShader_D3D::mfCreateCacheItem(SHWSInstance* pInst, std::vector<SCGBind>& InstBinds, byte* pData, int nLen, CHWShader_D3D* pSH, bool bShaderThread)
+bool CHWShader_D3D::mfCreateCacheItem(SHWSInstance* pInst, CShader *ef, std::vector<SCGBind>& InstBinds, byte* pData, int nLen, bool bShaderThread)
 {
-	if (!pSH->m_pGlobalCache || !pSH->m_pGlobalCache->m_pRes[CACHE_USER])
-	{
-		if (pSH->m_pGlobalCache)
-			pSH->m_pGlobalCache->Release(false);
-		pSH->m_pGlobalCache = mfInitCache(NULL, pSH, true, pSH->m_CRC32, false, false);
-	}
-	assert(pSH->m_pGlobalCache);
-	if (!pSH->m_pGlobalCache || !pSH->m_pGlobalCache->m_pRes[CACHE_USER])
+	auto cache = AcquireDiskCache(cacheSource::user);
+	if (!cache->m_pRes)
 		return false;
 
 	byte* byteData = NULL;
@@ -3500,33 +2854,29 @@ bool CHWShader_D3D::mfCreateCacheItem(SHWSInstance* pInst, std::vector<SCGBind>&
 	char name[256];
 	mfGenName(pInst, name, 256, 1);
 	CCryNameTSCRC nm = CCryNameTSCRC(name);
-	bool bRes = mfAddCacheItem(pSH->m_pGlobalCache, &h, pNewData, (int)(pP - pNewData), false, nm);
+	bool bRes = mfAddCacheItem(cache, &h, pNewData, (int)(pP - pNewData), false, nm);
 	SAFE_DELETE_ARRAY(pNewData);
-	if ((!(pSH->m_Flags & HWSG_PRECACHEPHASE) && gRenDev->m_cEF.m_nCombinationsProcess <= 0))
+	if (gRenDev->m_cEF.m_nCombinationsProcess <= 0)
 	{
 		if (bShaderThread && false)
 		{
 			if (pInst->m_pAsync)
 				pInst->m_pAsync->m_bPendedFlush = true;
 		}
-		else
-			pSH->mfFlushCacheFile();
-		cry_strcpy(name, pSH->GetName());
+		cry_strcpy(name, GetName());
 		char* s = strchr(name, '(');
 		if (s)
 			s[0] = 0;
 		if (!bShaderThread || true)
 		{
 			byte bStore = 1;
-			if (pSH->m_Flags & HWSG_FP_EMULATION)
+			if (m_Flags & HWSG_FP_EMULATION)
 				bStore = 2;
 			SShaderCombIdent Ident = pInst->m_Ident;
-			;
-			Ident.m_GLMask = pSH->m_nMaskGenFX;
+			Ident.m_GLMask = m_nMaskGenFX;
 			gRenDev->m_cEF.mfInsertNewCombination(Ident, pInst->m_eClass, name, 0, NULL, bStore);
 		}
 	}
-	pInst->m_nCache = CACHE_USER;
 
 	return bRes;
 }
@@ -3653,7 +3003,7 @@ void SShaderAsyncInfo::FlushPendingShaders()
 			Ident.m_MDMask = pAI->m_MDMask;
 			Ident.m_MDVMask = pAI->m_MDVMask;
 			Ident.m_pipelineState.opaque = pAI->m_pipelineState.opaque;
-			CHWShader_D3D::SHWSInstance* pInst = pSH->mfGetInstance(pAI->m_pFXShader, pAI->m_nHashInstance, Ident);
+			CHWShader_D3D::SHWSInstance* pInst = pSH->mfGetInstance(pAI->m_nHashInstance, Ident);
 			if (pInst)
 			{
 				if (pInst->m_pAsync != pAI)
@@ -3743,7 +3093,7 @@ int CHWShader_D3D::mfAsyncCompileReady(SHWSInstance* pInst)
 
 		mfPrintCompileInfo(pInst);
 
-		mfGetDstFileName(pInst, this, nmDst, 256, 3);
+		mfGetDstFileName(pInst, nmDst, 256, 3);
 		gEnv->pCryPak->AdjustFileName(nmDst, nameSrc, 0);
 		if (pAsync->m_pFXShader && pAsync->m_pFXShader->m_HWTechniques.Num())
 			pTech = pAsync->m_pFXShader->m_HWTechniques[0];
@@ -3785,15 +3135,14 @@ int CHWShader_D3D::mfAsyncCompileReady(SHWSInstance* pInst)
 
 		// Load samplers
 		if (pAsync->m_bPendedSamplers)
-			mfGatherFXParameters(pInst, &pInst->m_pBindVars, &InstBindVars, this, 2, pAsync->m_pFXShader);
+			mfGatherFXParameters(pInst, pInst->m_pBindVars, this, 2, pAsync->m_pFXShader);
 
 		if (pAsync->m_bPendedFlush)
 		{
 			mfFlushCacheFile();
 			cry_strcpy(nmDst, GetName());
 			char* s = strchr(nmDst, '(');
-			if (s)
-				s[0] = 0;
+			if (s) s[0] = '\0';
 			SShaderCombIdent Ident = pInst->m_Ident;
 			Ident.m_GLMask = m_nMaskGenFX;
 			gRenDev->m_cEF.mfInsertNewCombination(Ident, pInst->m_eClass, nmDst, 0);
@@ -3829,7 +3178,7 @@ bool CHWShader_D3D::mfRequestAsync(CShader* pSH, SHWSInstance* pInst, std::vecto
 {
 #ifdef SHADER_ASYNC_COMPILATION
 	char nameSrc[256], nmDst[256];
-	mfGetDstFileName(pInst, this, nmDst, 256, 3);
+	mfGetDstFileName(pInst, nmDst, 256, 3);
 	gEnv->pCryPak->AdjustFileName(nmDst, nameSrc, 0);
 
 	if (!SShaderAsyncInfo::PendingList().m_Next)
@@ -3838,13 +3187,6 @@ bool CHWShader_D3D::mfRequestAsync(CShader* pSH, SHWSInstance* pInst, std::vecto
 		SShaderAsyncInfo::PendingList().m_Prev = &SShaderAsyncInfo::PendingList();
 		SShaderAsyncInfo::PendingListT().m_Next = &SShaderAsyncInfo::PendingListT();
 		SShaderAsyncInfo::PendingListT().m_Prev = &SShaderAsyncInfo::PendingListT();
-	}
-
-	if (!m_pGlobalCache || !m_pGlobalCache->m_pRes[CACHE_USER])
-	{
-		if (m_pGlobalCache)
-			m_pGlobalCache->Release(false);
-		m_pGlobalCache = mfInitCache(NULL, this, true, m_CRC32, false, false);
 	}
 
 	pInst->m_pAsync = new SShaderAsyncInfo;
@@ -4156,7 +3498,7 @@ D3DBlob* CHWShader_D3D::mfCompileHLSL(CShader* pSH, char* prog_text, void** ppCo
 	return pCode;
 }
 
-void CHWShader_D3D::mfPrepareShaderDebugInfo(SHWSInstance* pInst, CHWShader_D3D* pSH, const char* szAsm, std::vector<SCGBind>& InstBindVars, void* pConstantTable)
+void CHWShader_D3D::mfPrepareShaderDebugInfo(SHWSInstance* pInst, const char* szAsm, std::vector<SCGBind>& InstBindVars, void* pConstantTable)
 {
 	if (szAsm)
 	{
@@ -4182,7 +3524,7 @@ void CHWShader_D3D::mfPrepareShaderDebugInfo(SHWSInstance* pInst, CHWShader_D3D*
 	if (CRenderer::CV_r_shadersdebug)
 	{
 		char nmdst[256];
-		mfGetDstFileName(pInst, pSH, nmdst, 256, 4);
+		mfGetDstFileName(pInst, nmdst, 256, 4);
 
 		string szName;
 		FILE* statusdst;
@@ -4195,7 +3537,7 @@ void CHWShader_D3D::mfPrepareShaderDebugInfo(SHWSInstance* pInst, CHWShader_D3D*
 		if (statusdst)
 		{
 			gEnv->pCryPak->FPrintf(statusdst, "\n// %s %s\n\n", "%STARTSHADER", mfProfileString(pInst->m_eClass));
-			if (pSH->m_eSHClass == eHWSC_Vertex)
+			if (m_eSHClass == eHWSC_Vertex)
 			{
 				for (uint32 i = 0; i < (uint32)InstBindVars.size(); i++)
 				{
@@ -4207,7 +3549,7 @@ void CHWShader_D3D::mfPrepareShaderDebugInfo(SHWSInstance* pInst, CHWShader_D3D*
 			gEnv->pCryPak->FPrintf(statusdst, "\n// %s\n", "%ENDSHADER");
 			gEnv->pCryPak->FClose(statusdst);
 		}
-		pInst->m_Handle.m_pShader = NULL;
+		pInst->m_Handle = {};
 	}
 }
 
@@ -4277,7 +3619,7 @@ bool CHWShader_D3D::mfCreateShaderEnv(int nThread, SHWSInstance* pInst, D3DBlob*
 		if (pAsm)
 		{
 			char* szAsm = (char*)pAsm->GetBufferPointer();
-			mfPrepareShaderDebugInfo(pInst, pSH, szAsm, InstBindVars, pConstantTable);
+			pSH->mfPrepareShaderDebugInfo(pInst, szAsm, InstBindVars, pConstantTable);
 		}
 		SAFE_RELEASE(pAsm);
 #endif
@@ -4298,42 +3640,36 @@ bool CHWShader_D3D::mfCreateShaderEnv(int nThread, SHWSInstance* pInst, D3DBlob*
 		if (bVF)
 			mfVertexFormat(pInst, pSH, pShader, pConstantTable);
 		if (pConstantTable)
-			mfCreateBinds(pInst, pConstantTable, (byte*)pShader->GetBufferPointer(), (uint32)pShader->GetBufferSize());
+			mfCreateBinds(pInst->m_pBindVars, pConstantTable, (std::size_t)pShader->GetBufferSize());
 	}
-	if (!(pSH->m_Flags & HWSG_PRECACHEPHASE))
+	int nConsts = 0;
+	int nParams = pInst->m_pBindVars.size();
+	for (int i = 0; i < nParams; i++)
 	{
-		int nConsts = 0;
-		int nParams = pInst->m_pBindVars.size();
-		for (int i = 0; i < nParams; i++)
+		SCGBind* pB = &pInst->m_pBindVars[i];
+		nConsts += pB->m_nParameters;
+	}
+	if (gRenDev->m_cEF.m_nCombinationsProcess >= 0)
+	{
+		if (!CParserBin::m_nPlatform)
 		{
-			SCGBind* pB = &pInst->m_pBindVars[i];
-			nConsts += pB->m_nParameters;
+			CryLog("%d: Compile %s %s (%d out of %d) - (%d/%d constants) ... ", nThread,
+				mfProfileString(pInst->m_eClass), pSH->GetName(), nCombination, gRenDev->m_cEF.m_nCombinationsProcessOverall,
+				nParams, nConsts);
 		}
-		if (gRenDev->m_cEF.m_nCombinationsProcess >= 0)
+		else
 		{
-			//assert(!bShaderThread);
-
-			//if (!(gRenDev->m_cEF.m_nCombination & 0xff))
-			if (!CParserBin::m_nPlatform)
-			{
-				CryLog("%d: Compile %s %s (%d out of %d) - (%d/%d constants) ... ", nThread,
-				       mfProfileString(pInst->m_eClass), pSH->GetName(), nCombination, gRenDev->m_cEF.m_nCombinationsProcessOverall,
-				       nParams, nConsts);
-			}
-			else
-			{
-				CryLog("%d: Compile %s %s (%d out of %d) ... ", nThread,
-				       mfProfileString(pInst->m_eClass), pSH->GetName(), nCombination, gRenDev->m_cEF.m_nCombinationsProcessOverall);
-			}
+			CryLog("%d: Compile %s %s (%d out of %d) ... ", nThread,
+				mfProfileString(pInst->m_eClass), pSH->GetName(), nCombination, gRenDev->m_cEF.m_nCombinationsProcessOverall);
 		}
 	}
 
-	mfGatherFXParameters(pInst, &pInst->m_pBindVars, &InstBindVars, pSH, bShaderThread ? 1 : 0, pFXShader);
+	mfGatherFXParameters(pInst, pInst->m_pBindVars, pSH, bShaderThread ? 1 : 0, pFXShader);
 
 	if (pShader)
-		mfCreateCacheItem(pInst, InstBindVars, (byte*)pShader->GetBufferPointer(), (uint32)pShader->GetBufferSize(), pSH, bShaderThread);
+		pSH->mfCreateCacheItem(pInst, pFXShader, InstBindVars, (byte*)pShader->GetBufferPointer(), (uint32)pShader->GetBufferSize(), bShaderThread);
 	else
-		mfCreateCacheItem(pInst, InstBindVars, NULL, 0, pSH, bShaderThread);
+		pSH->mfCreateCacheItem(pInst, pFXShader, InstBindVars, NULL, 0, bShaderThread);
 
 	SAFE_RELEASE(pErrorMsgs);
 	if (ID3D11ShaderReflection* pShaderReflection = (ID3D11ShaderReflection*)pConstantTable)
@@ -4346,7 +3682,7 @@ bool CHWShader_D3D::mfCreateShaderEnv(int nThread, SHWSInstance* pInst, D3DBlob*
 }
 
 // Compile pixel/vertex shader for the current instance properties
-bool CHWShader_D3D::mfActivate(CShader* pSH, uint32 nFlags, FXShaderToken* Table, TArray<uint32>* pSHData)
+bool CHWShader_D3D::mfActivate(CShader* pSH, uint32 nFlags)
 {
 	PROFILE_FRAME(Shader_HWShaderActivate);
 
@@ -4357,92 +3693,71 @@ bool CHWShader_D3D::mfActivate(CShader* pSH, uint32 nFlags, FXShaderToken* Table
 
 	if (mfIsValid(pInst, true) == ED3DShError_NotCompiled)
 	{
-		//if (!(m_Flags & HWSG_PRECACHEPHASE) && !(nFlags & HWSF_NEXT))
-		//  mfSetHWStartProfile(nFlags);
+		char name[128];
+		mfGenName(pInst, name, 128, 1);
+		pInst->m_DeviceObjectID = CCryNameTSCRC{ name }.get();
+		const auto devCacheKey = static_cast<SHWShaderCache::deviceShaderCacheKey>(pInst->m_DeviceObjectID);
 
-		bool bCreate = false;
-		// We need a different source and desination for fpStripExtension
-		// since a call to strcpy with the same src and dst results in
-		// undefined behaviour
-		char nameCacheUnstripped[256];
-		char nameCache[256];
-		float t0 = gEnv->pTimer->GetAsyncCurTime();
-
-		/*if (CRenderer::CV_r_shaderspreactivate == 2 || (nFlags & HWSF_STORECOMBINATION))
-		   {
-		   cry_strcpy(nameCache, GetName());
-		   char *s = strchr(nameCache, '(');
-		   if (s)
-		    s[0] = 0;
-		   gRenDev->m_cEF.mfInsertNewCombination(m_nMaskGenFX, pInst->m_RTMask, pInst->m_LightMask, pInst->m_MDMask, pInst->m_MDVMask, pInst->m_pipelineState.opaque, pInst->m_eSHClass, nameCache, 1);
-		   if (nFlags & HWSF_STORECOMBINATION)
-		    return false;
-		   }*/
-		mfGetDstFileName(pInst, this, nameCacheUnstripped, 256, 0);
-
-		cry_strcpy(nameCache, nameCacheUnstripped);
-		PathUtil::ReplaceExtension(nameCache, "fxcb");
-		if (!m_pDevCache)
-			m_pDevCache = mfInitDevCache(nameCache, this);
-
+		const SDeviceShaderEntry *entry = nullptr;
+		
+		// Try to find in cache
+		auto &devCache = GetDevCache();
+		auto it = devCache.find(devCacheKey);
+		if (it == devCache.end())
 		{
-			int32 nSize;
-			std::unique_ptr<byte[]> pCacheItemBuffer = nullptr;
-			{
-				// if shader compiling is enabled, make sure the user folder shader caches are also available
-				bool bReadOnly = CRenderer::CV_r_shadersAllowCompilation == 0;
-				if (!m_pGlobalCache || m_pGlobalCache->m_nPlatform != CParserBin::m_nPlatform ||
-					(!bReadOnly && !m_pGlobalCache->m_pRes[CACHE_USER]))
-				{
-					SAFE_RELEASE(m_pGlobalCache);
-					bool bAsync = CRenderer::CV_r_shadersasyncactivation != 0;
-					if (nFlags & HWSF_PRECACHE)
-						bAsync = false;
-					m_pGlobalCache = mfInitCache(nameCache, this, true, m_CRC32, bReadOnly, bAsync);
-				}
-				if (gRenDev->m_cEF.m_nCombinationsProcess >= 0)
-				{
-					mfGetDstFileName(pInst, this, nameCache, 256, 0);
-					PathUtil::ReplaceExtension(nameCache, "fxcb");
-					FXShaderCacheNamesItor it = m_ShaderCacheList.find(nameCache);
-					if (it == m_ShaderCacheList.end())
-						m_ShaderCacheList.insert(FXShaderCacheNamesItor::value_type(nameCache, m_CRC32));
-				}
-				pCacheItemBuffer = mfGetCacheItem(nFlags, nSize);
-			}
+			// Read from disk cache and store in cache
+			std::vector<cacheSource> cacheTypes = { cacheSource::readonly };
+			if (CRendererCVars::CV_r_shadersAllowCompilation)
+				cacheTypes = { cacheSource::user, cacheSource::readonly };
+			if (CRendererCVars::CV_r_shadersediting || gRenDev->IsShaderCacheGenMode())
+				cacheTypes = { cacheSource::user };
 
-			auto pCacheItem = reinterpret_cast<SShaderCacheHeaderItem*>(pCacheItemBuffer.get());
-			if (pCacheItem && pCacheItem->m_Class != 255)
+			for (const auto &cacheType : cacheTypes)
 			{
-				if (Table && CRenderer::CV_r_shadersAllowCompilation)
-					mfGetCacheTokenMap(Table, pSHData, m_nMaskGenShader);
-				if (((m_Flags & HWSG_PRECACHEPHASE) || gRenDev->m_cEF.m_nCombinationsProcess >= 0))
+				auto cache = QueryDiskCache(cacheType);
+				auto newEntry = mfGetCacheItem(pSH, name, cache, nFlags);
+				if (newEntry)
 				{
-					return true;
-				}
-				bool bRes = mfActivateCacheItem(pSH, pCacheItem, nSize, nFlags);
+					CryLog("CHWShader_D3D::mfActivate(): Shader '%s' not found in device cache but found in disk cache.", m_Name.c_str());
 
-				if (bRes)
-					return (pInst->m_Handle.m_pShader != NULL);
-			}
-			else if (pCacheItem && pCacheItem->m_Class == 255 && (nFlags & HWSF_PRECACHE) == 0)
-			{
-				return false;
+					// Store in cache
+					SHWShaderCache::deviceShaderCacheValue v;
+					v.emplace<SDeviceShaderEntry>(std::move(newEntry));
+					auto insertResult = devCache.emplace(
+						std::piecewise_construct,
+						std::forward_as_tuple(devCacheKey),
+						std::forward_as_tuple(std::move(v)));
+					entry = &stl::get<SDeviceShaderEntry>(insertResult.first->second);
+
+					break;
+				}
 			}
 		}
-		
-		//assert(!m_TokenData.empty());
+		else
+		{
+			const SHWShaderCache::deviceShaderCacheValue& cacheValue = it->second;
+			entry = stl::holds_alternative<SDeviceShaderEntry>(cacheValue) ?
+				&stl::get<SDeviceShaderEntry>(cacheValue) :
+				stl::get<const SDeviceShaderEntry*>(cacheValue);
+		}
+
+		if (entry)
+		{
+			if (gRenDev->m_cEF.m_nCombinationsProcess >= 0)
+				return true;
+
+			if (mfActivateCacheItem(pSH, entry, nFlags))
+				return (pInst->m_Handle.m_pShader != nullptr);
+
+			if ((nFlags & HWSF_PRECACHE) == 0)
+				return false;
+		}
 
 		TArray<char> newScr;
 
 		if (nFlags & HWSF_PRECACHE)
 			gRenDev->m_cEF.m_nCombinationsCompiled++;
-		/*if (strstr(m_NameSourceFX.c_str(), "Cloak") && !strcmp(m_EntryFunc.c_str(), "Common_ZPassVS"))
-		   {
-		   int nnn = 0;
-		   }*/
 
-		float fTime0 = iTimer->GetAsyncCurTime();
 		D3DBlob* pShader = NULL;
 		void* pConstantTable = NULL;
 		D3DBlob* pErrorMsgs = NULL;
@@ -4455,7 +3770,7 @@ bool CHWShader_D3D::mfActivate(CShader* pSH, uint32 nFlags, FXShaderToken* Table
 		{
 			// MemReplay shows that 16kb should be enough memory to hold the script without having to reallocate
 			newScr.reserve(16 * 1024);
-			bScriptSuccess = mfGenerateScript(pSH, pInst, InstBindVars, nFlags, Table, pSHData, newScr);
+			bScriptSuccess = mfGenerateScript(pSH, pInst, InstBindVars, nFlags, newScr);
 			ASSERT_IN_SHADER(bScriptSuccess);
 		}
 
@@ -4505,12 +3820,7 @@ bool CHWShader_D3D::mfActivate(CShader* pSH, uint32 nFlags, FXShaderToken* Table
 			pShaderReflection->Release();
 			pConstantTable = nullptr;
 		}
-
-		fTime0 = iTimer->GetAsyncCurTime() - fTime0;
-		//iLog->LogToConsole(" Time activate: %.3f", fTime0);
 	}
-	else if (pSHData)
-		mfGetCacheTokenMap(Table, pSHData, m_nMaskGenShader);
 
 	ED3DShError shResult = mfIsValid(pInst, true);
 	bool bSuccess = (shResult == ED3DShError_Ok) || (shResult == ED3DShError_Fake);
@@ -4801,122 +4111,6 @@ void CAsyncShaderTask::CShaderThread::ThreadEntry()
 
 #ifdef SHADERS_SERIALIZING
 
-bool STexSamplerFX::Export(SShaderSerializeContext& SC)
-{
-	bool bRes = true;
-	SSTexSamplerFX TS;
-
-	TS.m_nRTIdx        = -1;
-	TS.m_nsName        = SC.AddString(m_szName.c_str());
-	TS.m_nsNameTexture = SC.AddString(m_szTexture.c_str());
-	TS.m_eTexType      = m_eTexType;
-	TS.m_nSamplerSlot  = m_nSlotId;
-	TS.m_nTexFlags     = m_nTexFlags;
-
-	if (m_nTexState != EDefaultSamplerStates::Unspecified)
-	{
-		const SSamplerState& pTS = CDeviceObjectFactory::LookupSamplerState(m_nTexState).first;
-
-		TS.m_bTexState     = 1;
-		TS.m_nMinFilter    = pTS.m_nMinFilter;
-		TS.m_nMagFilter    = pTS.m_nMagFilter;
-		TS.m_nMipFilter    = pTS.m_nMipFilter;
-		TS.m_nAddressU     = pTS.m_nAddressU;
-		TS.m_nAddressV     = pTS.m_nAddressV;
-		TS.m_nAddressW     = pTS.m_nAddressW;
-		TS.m_nAnisotropy   = pTS.m_nAnisotropy;
-		TS.m_dwBorderColor = pTS.m_dwBorderColor;
-		TS.m_bActive       = pTS.m_bActive;
-		TS.m_bComparison   = pTS.m_bComparison;
-		TS.m_bSRGBLookup   = pTS.m_bSRGBLookup;
-	}
-
-	if (m_pTarget)
-	{
-		TS.m_nRTIdx = SC.FXTexRTs.Num();
-
-		SHRenderTarget* pRT = m_pTarget;
-		SSHRenderTarget RT;
-
-		RT.m_eOrder        = pRT->m_eOrder;
-		RT.m_nProcessFlags = pRT->m_nProcessFlags;
-		RT.m_nsTargetName  = SC.AddString(pRT->m_TargetName.c_str());
-		RT.m_nWidth        = pRT->m_nWidth;
-		RT.m_nHeight       = pRT->m_nHeight;
-		RT.m_eTF           = pRT->m_eTF;
-		RT.m_nIDInPool     = pRT->m_nIDInPool;
-		RT.m_eUpdateType   = pRT->m_eUpdateType;
-		RT.m_bTempDepth    = pRT->m_bTempDepth;
-		RT.m_ClearColor    = pRT->m_ClearColor;
-		RT.m_fClearDepth   = pRT->m_fClearDepth;
-		RT.m_nFlags        = pRT->m_nFlags;
-		RT.m_nFilterFlags  = pRT->m_nFilterFlags;
-
-		SC.FXTexRTs.push_back(RT);
-	}
-
-	//crude workaround for TArray push_back() bug a=b operator. Does not init a, breaks texState dtor for a
-	SSTexSamplerFX* pNewSampler = SC.FXTexSamplers.AddIndex(1);
-	memcpy(pNewSampler, &TS, sizeof(SSTexSamplerFX));
-
-	return bRes;
-}
-bool STexSamplerFX::Import(SShaderSerializeContext& SC, SSTexSamplerFX* pTS)
-{
-	bool bRes = true;
-
-	m_szName    = sString(pTS->m_nsName, SC.Strings);
-	m_szTexture = sString(pTS->m_nsNameTexture, SC.Strings);
-	m_eTexType  = pTS->m_eTexType;
-	m_nSlotId   = pTS->m_nSamplerSlot;
-	m_nTexFlags = pTS->m_nTexFlags;
-
-	if (pTS->m_bTexState)
-	{
-		SSamplerState TS;
-
-		TS.m_nMinFilter    = pTS->m_nMinFilter;
-		TS.m_nMagFilter    = pTS->m_nMagFilter;
-		TS.m_nMipFilter    = pTS->m_nMipFilter;
-		TS.m_nAddressU     = pTS->m_nAddressU;
-		TS.m_nAddressV     = pTS->m_nAddressV;
-		TS.m_nAddressW     = pTS->m_nAddressW;
-		TS.m_nAnisotropy   = pTS->m_nAnisotropy;
-		TS.m_dwBorderColor = pTS->m_dwBorderColor;
-		TS.m_bActive       = pTS->m_bActive;
-		TS.m_bComparison   = pTS->m_bComparison;
-		TS.m_bSRGBLookup   = pTS->m_bSRGBLookup;
-
-		m_nTexState = CDeviceObjectFactory::GetOrCreateSamplerStateHandle(TS);
-	}
-
-	if (pTS->m_nRTIdx != -1)
-	{
-		SSHRenderTarget* pRT = &SC.FXTexRTs[pTS->m_nRTIdx];
-		SHRenderTarget* pDst = new SHRenderTarget;
-
-		pDst->m_eOrder        = pRT->m_eOrder;
-		pDst->m_nProcessFlags = pRT->m_nProcessFlags;
-		pDst->m_TargetName    = sString(pRT->m_nsTargetName, SC.Strings);
-		pDst->m_nWidth        = pRT->m_nWidth;
-		pDst->m_nHeight       = pRT->m_nHeight;
-		pDst->m_eTF           = pRT->m_eTF;
-		pDst->m_nIDInPool     = pRT->m_nIDInPool;
-		pDst->m_eUpdateType   = pRT->m_eUpdateType;
-		pDst->m_bTempDepth    = pRT->m_bTempDepth != 0;
-		pDst->m_ClearColor    = pRT->m_ClearColor;
-		pDst->m_fClearDepth   = pRT->m_fClearDepth;
-		pDst->m_nFlags        = pRT->m_nFlags;
-		pDst->m_nFilterFlags  = pRT->m_nFilterFlags;
-
-		m_pTarget = pDst;
-	}
-
-	PostLoad();
-
-	return bRes;
-}
-
 bool SFXParam::Export(SShaderSerializeContext& SC)
 {
 	bool bRes = true;
@@ -5119,7 +4313,7 @@ bool CHWShader::ImportParams(SShaderSerializeContext& SC, SCHWShader* pSHW, byte
 	return bRes;
 }
 
-bool CHWShader_D3D::Export(SShaderSerializeContext& SC)
+bool CHWShader_D3D::Export(CShader *pSH, SShaderSerializeContext& SC)
 {
 	bool bRes = true;
 
@@ -5143,33 +4337,25 @@ bool CHWShader_D3D::Export(SShaderSerializeContext& SC)
 	SHW.m_nMaskAnd_RT = m_nMaskAnd_RT;
 	SHW.m_Flags = m_Flags;
 
-	FXShaderToken* pMap = NULL;
-	TArray<uint32>* pData = &m_TokenData;
-	bool bDeleteTokenData = false;
+	FXShaderToken Table;
+	TArray<uint32_t> SHData;
 
 	// No longer export any token data, slow and bloated!
 	const bool bOutputTokens = false;
 
-	if (bOutputTokens) // && !pData->size())
-	{
-		//always evaluate?
-		if (1)
-		{
-			bDeleteTokenData = true;
-			mfGetCacheTokenMap(pMap, pData, m_nMaskGenShader /*is this correct? m_nMaskGenFX*/);
-		}
-		else
-			assert(0);
-	}
+	if (bOutputTokens)
+		mfGetCacheTokenMap(Table, SHData);
+	else
+		SHData = m_TokenData;
 
-	if (bOutputTokens && !pMap)
+	if (bOutputTokens && !Table.size())
 	{
 		assert(0);
 		return false;
 	}
 
-	SHW.m_nTokens = bOutputTokens ? pData->size() : 0;
-	SHW.m_nTableEntries = bOutputTokens ? pMap->size() : 0;
+	SHW.m_nTokens = bOutputTokens ? SHData.size() : 0;
+	SHW.m_nTableEntries = bOutputTokens ? SHData.size() : 0;
 
 	SCHWShader SHWTemp = SHW;
 
@@ -5178,14 +4364,13 @@ bool CHWShader_D3D::Export(SShaderSerializeContext& SC)
 
 	if (bOutputTokens)
 	{
-		sAddDataArray_POD(SC.Data, *pData, nOffs);
+		sAddDataArray_POD(SC.Data, SHData, nOffs);
 
-		FXShaderTokenItor itor;
-		for (itor = pMap->begin(); itor != pMap->end(); itor++)
+		for (const auto &T : Table)
 		{
 			//String pool method
-			sAddData(SC.Data, itor->Token);
-			uint32 tokenStrIdx = SC.AddString(itor->SToken.c_str());
+			sAddData(SC.Data, T.Token);
+			uint32 tokenStrIdx = SC.AddString(T.SToken.c_str());
 			sAddData(SC.Data, tokenStrIdx);
 		}
 	}
@@ -5199,12 +4384,6 @@ bool CHWShader_D3D::Export(SShaderSerializeContext& SC)
 		{
 			CryFatalError("Export failed");
 		}
-	}
-
-	if (bDeleteTokenData)
-	{
-		SAFE_DELETE(pData);
-		SAFE_DELETE(pMap);
 	}
 
 	return bRes;
@@ -5229,54 +4408,8 @@ CHWShader* CHWShader::Import(SShaderSerializeContext& SC, int nOffs, uint32 CRC3
 	TArray<uint32> SHData;
 	SHData.resize(pSHW->m_nTokens);
 	memcpy(&SHData[0], pData, pSHW->m_nTokens * sizeof(uint32));
-	pData += pSHW->m_nTokens * sizeof(uint32);
 
-	FXShaderToken Table, * pTable = NULL;
-	Table.reserve(pSHW->m_nTableEntries);
-
-	nOffs = 0;
-
-	//Copy string pool, TODO separate string pool for tokens!
-	//TArray<char> tokenStringPool = SC.Strings;
-
-	// Token data is no longer in export data
-	if (0)  //CRenderer::CV_r_shadersAllowCompilation)
-	{
-		pTable = &Table;
-		for (uint32 i = 0; i < pSHW->m_nTableEntries; i++)
-		{
-			// string pool method
-			DWORD nToken = *(DWORD*)&pData[nOffs];
-			nOffs += sizeof(DWORD);
-			uint32 nTokenStrIdx = *(DWORD*)&pData[nOffs];
-			nOffs += sizeof(uint32);
-
-			if (CParserBin::m_bEndians)
-			{
-				SwapEndian(nToken, eBigEndian);
-				SwapEndian(nTokenStrIdx, eBigEndian);
-			}
-
-			STokenD TD;
-			TD.SToken = sString(nTokenStrIdx, SC.Strings);
-
-			TD.Token = nToken;
-
-			Table.push_back(TD);
-		}
-		pData += nOffs;
-
-		std::vector<STexSamplerRT> Samplers;
-		ImportSamplers(SC, pSHW, pData, Samplers);
-
-		std::vector<SFXParam> Params;
-		ImportParams(SC, pSHW, pData, Params);
-	}
-
-	bool bPrecache = (SC.SSR.m_Flags & EF_PRECACHESHADER) != 0;
-
-	//static CHWShader *mfForName(const char *name, const char *nameSource, uint32 CRC32, const char *szEntryFunc, EHWShaderClass eClass, TArray<uint32>& SHData, FXShaderToken *pTable, uint32 dwType, CShader *pFX, uint64 nMaskGen=0, uint64 nMaskGenFX=0);
-	pHWSH = CHWShader::mfForName(szName, szNameSource, CRC32, szNameEntry, pSHW->m_eSHClass, SHData, pTable, pSHW->m_dwShaderType, pSH, pSHW->m_nMaskGenShader, pSHW->m_nMaskGenFX);
+	pHWSH = CHWShader::mfForName(szName, szNameSource, CRC32, szNameEntry, pSHW->m_eSHClass, SHData, FXShaderToken{}, pSHW->m_dwShaderType, pSH, pSHW->m_nMaskGenShader, pSHW->m_nMaskGenFX);
 
 	pHWSH->m_eSHClass = shaderHW.m_eSHClass;
 	pHWSH->m_dwShaderType = shaderHW.m_dwShaderType;

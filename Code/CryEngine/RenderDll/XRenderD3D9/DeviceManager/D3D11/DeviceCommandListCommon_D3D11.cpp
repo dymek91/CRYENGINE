@@ -18,6 +18,7 @@ CDeviceTimestampGroup::CDeviceTimestampGroup()
 	: m_numTimestamps(0)
 	, m_pDisjointQuery(nullptr)
 	, m_frequency(0L)
+	, m_measurable(false)
 {
 	m_timestampQueries.fill(nullptr);
 	m_timeValues.fill(0);
@@ -47,41 +48,56 @@ void CDeviceTimestampGroup::Init()
 void CDeviceTimestampGroup::BeginMeasurement()
 {
 	m_numTimestamps = 0;
+	m_frequency = 0;
+	m_measurable = false;
 	gcpRendD3D->GetDeviceContext().Begin(m_pDisjointQuery);
 }
 
 void CDeviceTimestampGroup::EndMeasurement()
 {
 	gcpRendD3D->GetDeviceContext().End(m_pDisjointQuery);
+	m_measurable = true;
 }
 
-uint32 CDeviceTimestampGroup::IssueTimestamp(void* pCommandList)
+uint32 CDeviceTimestampGroup::IssueTimestamp(CDeviceCommandList* pCommandList)
 {
 	assert(m_numTimestamps < m_timestampQueries.size());
 	gcpRendD3D->GetDeviceContext().End(m_timestampQueries[m_numTimestamps]);
+	m_timeValues[m_numTimestamps] = 0;
 	return m_numTimestamps++;
 }
 
 bool CDeviceTimestampGroup::ResolveTimestamps()
 {
-	if (m_numTimestamps == 0)
-		return true;
-
-	D3D11_QUERY_DATA_TIMESTAMP_DISJOINT disjointData;
-	if (gcpRendD3D->GetDeviceContext().GetData(m_pDisjointQuery, &disjointData, m_pDisjointQuery->GetDataSize(), 0) == S_OK)
-	{
-		m_frequency = disjointData.Frequency;
-	}
-	else
-	{
+	if (!m_measurable)
 		return false;
+
+	// Don't ask twice (API violation)
+	if (!m_frequency)
+	{
+		D3D11_QUERY_DATA_TIMESTAMP_DISJOINT disjointData;
+		if (gcpRendD3D->GetDeviceContext().GetData(m_pDisjointQuery, &disjointData, m_pDisjointQuery->GetDataSize(), 0) == S_OK)
+		{
+			m_frequency = disjointData.Frequency;
+		}
+		else
+		{
+			m_frequency = 0;
+			return false;
+		}
 	}
 
-	for (int i = m_numTimestamps - 1; i >= 0; i--)
+	int i = m_numTimestamps;
+	while (--i >= 0)
 	{
-		if (gcpRendD3D->GetDeviceContext().GetData(m_timestampQueries[i], &m_timeValues[i], m_timestampQueries[i]->GetDataSize(), 0) != S_OK)
+		// Don't ask twice (API violation)
+		if (!m_timeValues[i])
 		{
-			return false;
+			if (gcpRendD3D->GetDeviceContext().GetData(m_timestampQueries[i], &m_timeValues[i], m_timestampQueries[i]->GetDataSize(), 0) != S_OK)
+			{
+				m_timeValues[i] = 0;
+				return false;
+			}
 		}
 	}
 
@@ -174,6 +190,50 @@ void CDeviceCommandListImpl::ResetImpl()
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// *INDENT-OFF*
+static_assert(
+	(1 << eHWSC_Vertex  ) == EShaderStage_Vertex   &&
+	(1 << eHWSC_Pixel   ) == EShaderStage_Pixel    &&
+	(1 << eHWSC_Geometry) == EShaderStage_Geometry &&
+	(1 << eHWSC_Domain  ) == EShaderStage_Domain   &&
+	(1 << eHWSC_Hull    ) == EShaderStage_Hull,
+	"EShaderStage should have bits corresponding with EHWShaderClass");
+
+static_assert(
+	eHWSC_Vertex   == CSubmissionQueue_DX11::TYPE_VS &&
+	eHWSC_Pixel    == CSubmissionQueue_DX11::TYPE_PS &&
+	eHWSC_Geometry == CSubmissionQueue_DX11::TYPE_GS &&
+	eHWSC_Domain   == CSubmissionQueue_DX11::TYPE_DS &&
+	eHWSC_Hull     == CSubmissionQueue_DX11::TYPE_HS &&
+	eHWSC_Compute  == CSubmissionQueue_DX11::TYPE_CS,
+	"SHADER_TYPE enumeration should match EHWShaderClass for performance reasons");
+
+static inline void BindShader(EHWShaderClass shaderClass, ID3D11Resource* pBin)
+{
+	CD3D9Renderer* const __restrict rd = gcpRendD3D;
+	rd->m_DevMan.BindShader(static_cast<CSubmissionQueue_DX11::SHADER_TYPE>(shaderClass), pBin);
+}
+
+static inline void BindGraphicsSRV(EHWShaderClass shaderClass, ID3D11ShaderResourceView* pSrv, uint32 slot)
+{
+	CD3D9Renderer* const __restrict rd = gcpRendD3D;
+	rd->m_DevMan.BindSRV(static_cast<CSubmissionQueue_DX11::SHADER_TYPE>(shaderClass), pSrv, slot);
+}
+
+static inline void BindGraphicsSampler(EHWShaderClass shaderClass, ID3D11SamplerState* pSamplerState, uint32 slot)
+{
+	CD3D9Renderer* const __restrict rd = gcpRendD3D;
+	rd->m_DevMan.BindSampler(static_cast<CSubmissionQueue_DX11::SHADER_TYPE>(shaderClass), pSamplerState, slot);
+}
+
+static inline void BindGraphicsConstantBuffer(EHWShaderClass shaderClass, D3DBuffer* pBuffer, uint32 slot, uint32 offset, uint32 size)
+{
+	CD3D9Renderer* const __restrict rd = gcpRendD3D;
+	rd->m_DevMan.BindConstantBuffer(static_cast<CSubmissionQueue_DX11::SHADER_TYPE>(shaderClass), pBuffer, slot, offset, size);
+}
+// *INDENT-ON*
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void CDeviceGraphicsCommandInterfaceImpl::BeginRenderPassImpl(const CDeviceRenderPass& renderPass, const D3DRectangle& renderArea)
 {
 	CD3D9Renderer* const __restrict rd = gcpRendD3D;
@@ -216,25 +276,23 @@ void CDeviceGraphicsCommandInterfaceImpl::SetPipelineStateImpl(const CDeviceGrap
 		m_graphicsState.custom.bDepthStencilStateDirty = true;
 	}
 
-	// Shaders
-	const std::array<void*, eHWSC_Num>& shaders = pDevicePSO->m_pDeviceShaders;
-	if (m_sharedState.shader[eHWSC_Vertex].Set(shaders[eHWSC_Vertex]))     rd->m_DevMan.BindShader(CSubmissionQueue_DX11::TYPE_VS, (ID3D11Resource*)shaders[eHWSC_Vertex]);
-	if (m_sharedState.shader[eHWSC_Pixel].Set(shaders[eHWSC_Pixel]))       rd->m_DevMan.BindShader(CSubmissionQueue_DX11::TYPE_PS, (ID3D11Resource*)shaders[eHWSC_Pixel]);
-	if (m_sharedState.shader[eHWSC_Geometry].Set(shaders[eHWSC_Geometry])) rd->m_DevMan.BindShader(CSubmissionQueue_DX11::TYPE_GS, (ID3D11Resource*)shaders[eHWSC_Geometry]);
-	if (m_sharedState.shader[eHWSC_Domain].Set(shaders[eHWSC_Domain]))     rd->m_DevMan.BindShader(CSubmissionQueue_DX11::TYPE_DS, (ID3D11Resource*)shaders[eHWSC_Domain]);
-	if (m_sharedState.shader[eHWSC_Hull].Set(shaders[eHWSC_Hull]))         rd->m_DevMan.BindShader(CSubmissionQueue_DX11::TYPE_HS, (ID3D11Resource*)shaders[eHWSC_Hull]);
-
 	// input layout and topology
 	if (m_graphicsState.custom.inputLayout.Set(pDevicePSO->m_pInputLayout.get()))   rd->m_DevMan.BindVtxDecl(pDevicePSO->m_pInputLayout);
 	if (m_graphicsState.custom.topology.Set(pDevicePSO->m_PrimitiveTopology))       rd->m_DevMan.BindTopology(pDevicePSO->m_PrimitiveTopology);
 
-	// update valid shader mask
+	// Shaders and update valid shader mask
 	m_sharedState.validShaderStages = EShaderStage_None;
-	if (pDevicePSO->m_pDeviceShaders[eHWSC_Vertex])   m_sharedState.validShaderStages |= EShaderStage_Vertex;
-	if (pDevicePSO->m_pDeviceShaders[eHWSC_Pixel])    m_sharedState.validShaderStages |= EShaderStage_Pixel;
-	if (pDevicePSO->m_pDeviceShaders[eHWSC_Geometry]) m_sharedState.validShaderStages |= EShaderStage_Geometry;
-	if (pDevicePSO->m_pDeviceShaders[eHWSC_Domain])   m_sharedState.validShaderStages |= EShaderStage_Domain;
-	if (pDevicePSO->m_pDeviceShaders[eHWSC_Hull])     m_sharedState.validShaderStages |= EShaderStage_Hull;
+
+	const std::array<void*, eHWSC_Num>& shaders = pDevicePSO->m_pDeviceShaders;
+	for (EHWShaderClass shaderClass = eHWSC_Vertex; shaderClass != eHWSC_NumGfx; shaderClass = EHWShaderClass(shaderClass + 1))
+	{
+		m_sharedState.validShaderStages |= SHADERSTAGE_FROM_SHADERCLASS_CONDITIONAL(shaderClass, shaders[shaderClass] ? 1 : 0);
+
+		if (m_sharedState.shader[shaderClass].Set(shaders[shaderClass]))
+		{
+			BindShader(shaderClass, (ID3D11Resource*)shaders[shaderClass]);
+		}
+	}
 
 	m_sharedState.srvs = pDevicePSO->m_SRVs;
 	m_sharedState.samplers = pDevicePSO->m_Samplers;
@@ -259,64 +317,16 @@ void CDeviceGraphicsCommandInterfaceImpl::SetResourcesImpl(uint32 bindSlot, cons
 	}
 }
 
-// *INDENT-OFF*
-void BindGraphicsSRV(EHWShaderClass shaderClass, ID3D11ShaderResourceView* pSrv, uint32 slot)
-{
-	CD3D9Renderer *const __restrict rd = gcpRendD3D;
-
-	switch (shaderClass)
-	{
-	case eHWSC_Vertex:   rd->m_DevMan.BindSRV(CSubmissionQueue_DX11::TYPE_VS, pSrv, slot); break;
-	case eHWSC_Pixel:    rd->m_DevMan.BindSRV(CSubmissionQueue_DX11::TYPE_PS, pSrv, slot); break;
-	case eHWSC_Geometry: rd->m_DevMan.BindSRV(CSubmissionQueue_DX11::TYPE_GS, pSrv, slot); break;
-	case eHWSC_Domain:   rd->m_DevMan.BindSRV(CSubmissionQueue_DX11::TYPE_DS, pSrv, slot); break;
-	case eHWSC_Hull:     rd->m_DevMan.BindSRV(CSubmissionQueue_DX11::TYPE_HS, pSrv, slot); break;
-	default:
-		CRY_ASSERT(false);
-	}
-}
-
-void BindGraphicsSampler(EHWShaderClass shaderClass, ID3D11SamplerState* pSamplerState, uint32 slot)
-{
-	CD3D9Renderer *const __restrict rd = gcpRendD3D;
-
-	switch (shaderClass)
-	{
-	case eHWSC_Vertex:   rd->m_DevMan.BindSampler(CSubmissionQueue_DX11::TYPE_VS, pSamplerState, slot); break;
-	case eHWSC_Pixel:    rd->m_DevMan.BindSampler(CSubmissionQueue_DX11::TYPE_PS, pSamplerState, slot); break;
-	case eHWSC_Geometry: rd->m_DevMan.BindSampler(CSubmissionQueue_DX11::TYPE_GS, pSamplerState, slot); break;
-	case eHWSC_Domain:   rd->m_DevMan.BindSampler(CSubmissionQueue_DX11::TYPE_DS, pSamplerState, slot); break;
-	case eHWSC_Hull:     rd->m_DevMan.BindSampler(CSubmissionQueue_DX11::TYPE_HS, pSamplerState, slot); break;
-	default:
-		CRY_ASSERT(false);
-	}
-}
-
-void BindGraphicsConstantBuffer(EHWShaderClass shaderClass, D3DBuffer* pBuffer, uint32 slot, uint32 offset, uint32 size)
-{
-	CD3D9Renderer *const __restrict rd = gcpRendD3D;
-
-	switch (shaderClass)
-	{
-	case eHWSC_Vertex:   rd->m_DevMan.BindConstantBuffer(CSubmissionQueue_DX11::TYPE_VS, pBuffer, slot, offset, size); break;
-	case eHWSC_Pixel:    rd->m_DevMan.BindConstantBuffer(CSubmissionQueue_DX11::TYPE_PS, pBuffer, slot, offset, size); break;
-	case eHWSC_Geometry: rd->m_DevMan.BindConstantBuffer(CSubmissionQueue_DX11::TYPE_GS, pBuffer, slot, offset, size); break;
-	case eHWSC_Domain:   rd->m_DevMan.BindConstantBuffer(CSubmissionQueue_DX11::TYPE_DS, pBuffer, slot, offset, size); break;
-	case eHWSC_Hull:     rd->m_DevMan.BindConstantBuffer(CSubmissionQueue_DX11::TYPE_HS, pBuffer, slot, offset, size); break;
-	default:
-		CRY_ASSERT(false);
-	}
-}
-// *INDENT-ON*
-
 void CDeviceGraphicsCommandInterfaceImpl::SetResources_RequestedByShaderOnly(const CDeviceResourceSet* pResources)
 {
 	CD3D9Renderer* const __restrict rd = gcpRendD3D;
 	auto pResourcesDX11 = reinterpret_cast<const CDeviceResourceSet_DX11*>(pResources);
 
-	for (EHWShaderClass shaderClass = eHWSC_Vertex; shaderClass != eHWSC_Num; shaderClass = EHWShaderClass(shaderClass + 1))
+	// Shader stages are ordered by usage-frequency and loop exists according to usage-frequency (VS+PS fast, etc.)
+	int validShaderStages = m_sharedState.validShaderStages;
+	for (EHWShaderClass shaderClass = eHWSC_Vertex; validShaderStages; shaderClass = EHWShaderClass(shaderClass + 1), validShaderStages >>= 1)
 	{
-		if (m_sharedState.validShaderStages & SHADERSTAGE_FROM_SHADERCLASS(shaderClass))
+		if (validShaderStages & 1)
 		{
 			// Bind SRVs
 			// if (!pResourcesDX11->compiledSRVs.empty()) // currently this is always the case
@@ -386,7 +396,7 @@ void CDeviceGraphicsCommandInterfaceImpl::SetResources_All(const CDeviceResource
 	CD3D9Renderer* const __restrict rd = gcpRendD3D;
 	auto pResourcesDX11 = reinterpret_cast<const CDeviceResourceSet_DX11*>(pResources);
 
-	for (EHWShaderClass shaderClass = eHWSC_Vertex; shaderClass != eHWSC_Num; shaderClass = EHWShaderClass(shaderClass + 1))
+	for (EHWShaderClass shaderClass = eHWSC_Vertex; shaderClass != eHWSC_NumGfx; shaderClass = EHWShaderClass(shaderClass + 1))
 	{
 		// Bind SRVs
 		for (int slot = 0; slot < pResourcesDX11->compiledTextureSRVs[shaderClass].size(); ++slot)
@@ -483,12 +493,12 @@ void CDeviceGraphicsCommandInterfaceImpl::SetInlineConstantBufferImpl(uint32 bin
 {
 	CRY_ASSERT(bindSlot <= EResourceLayoutSlot_Max);
 
-	for (EHWShaderClass shaderClass = eHWSC_Vertex; shaderClass < eHWSC_Num; shaderClass = EHWShaderClass(shaderClass + 1))
+	// Shader stages are ordered by usage-frequency and loop exists according to usage-frequency (VS+PS fast, etc.)
+	int validShaderStages = shaderStages;
+	for (EHWShaderClass shaderClass = eHWSC_Vertex; validShaderStages; shaderClass = EHWShaderClass(shaderClass + 1), validShaderStages >>= 1)
 	{
-		if (shaderStages & SHADERSTAGE_FROM_SHADERCLASS(shaderClass))
-		{
+		if (validShaderStages & 1)
 			SetInlineConstantBufferImpl(bindSlot, pBuffer, shaderSlot, shaderClass);
-		}
 	}
 }
 
@@ -598,7 +608,7 @@ void CDeviceGraphicsCommandInterfaceImpl::ClearSurfaceImpl(D3DSurface* pView, co
 	gcpRendD3D->GetDeviceContext().ClearView(pView, color, numRects, pRects);
 #else
 	CRY_ASSERT(numRects == 0); // not supported on dx11
-	return gcpRendD3D->GetDeviceContext().ClearRenderTargetView(pView, color);
+	gcpRendD3D->GetDeviceContext().ClearRenderTargetView(pView, color);
 #endif
 }
 
@@ -729,20 +739,26 @@ void CDeviceComputeCommandInterfaceImpl::DispatchImpl(uint32 X, uint32 Y, uint32
 
 void CDeviceComputeCommandInterfaceImpl::ClearUAVImpl(D3DUAV* pView, const FLOAT Values[4], UINT NumRects, const D3D11_RECT* pRects)
 {
-#if (CRY_RENDERER_DIRECT3D < 111)
-	if (NumRects) __debugbreak();
-#endif
 	CD3D9Renderer* const __restrict rd = gcpRendD3D;
-	rd->GetDeviceContext().ClearUnorderedAccessViewFloat(pView, Values);
+
+#if (CRY_RENDERER_DIRECT3D >= 120)
+	gcpRendD3D->GetDeviceContext().ClearRectsUnorderedAccessViewFloat(pView, Values, NumRects, pRects);
+#else
+	CRY_ASSERT(NumRects == 0); // not supported on dx11
+	gcpRendD3D->GetDeviceContext().ClearUnorderedAccessViewFloat(pView, Values);
+#endif
 }
 
 void CDeviceComputeCommandInterfaceImpl::ClearUAVImpl(D3DUAV* pView, const UINT Values[4], UINT NumRects, const D3D11_RECT* pRects)
 {
-#if (CRY_RENDERER_DIRECT3D < 111)
-	if (NumRects) __debugbreak();
-#endif
 	CD3D9Renderer* const __restrict rd = gcpRendD3D;
-	rd->GetDeviceContext().ClearUnorderedAccessViewUint(pView, Values);
+
+#if (CRY_RENDERER_DIRECT3D >= 120)
+	gcpRendD3D->GetDeviceContext().ClearRectsUnorderedAccessViewUint(pView, Values, NumRects, pRects);
+#else
+	CRY_ASSERT(NumRects == 0); // not supported on dx11
+	gcpRendD3D->GetDeviceContext().ClearUnorderedAccessViewUint(pView, Values);
+#endif
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

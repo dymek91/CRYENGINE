@@ -18,16 +18,17 @@ EShaderStage SDeviceObjectHelpers::GetShaderInstanceInfo(THwShaderInfo& result, 
 			return EShaderStage_None;
 
 		SShaderPass& shaderPass = pShaderTechnique->m_Passes[0];
+		
+		// Shader pointers are consecutive
+		CHWShader** pHWShaders = &shaderPass.m_VShader;
 
-		CHWShader* pHWShaders[] =
-		{
-			shaderPass.m_VShader,
-			shaderPass.m_PShader,
-			shaderPass.m_GShader,
-			shaderPass.m_CShader,
-			shaderPass.m_DShader,
-			shaderPass.m_HShader,
-		};
+		// Compile time evaluable, should produce no code
+		CRY_ASSERT(eHWSC_Vertex   == (&shaderPass.m_VShader - &shaderPass.m_VShader));
+		CRY_ASSERT(eHWSC_Pixel    == (&shaderPass.m_PShader - &shaderPass.m_VShader));
+		CRY_ASSERT(eHWSC_Geometry == (&shaderPass.m_GShader - &shaderPass.m_VShader));
+		CRY_ASSERT(eHWSC_Domain   == (&shaderPass.m_DShader - &shaderPass.m_VShader));
+		CRY_ASSERT(eHWSC_Hull     == (&shaderPass.m_HShader - &shaderPass.m_VShader));
+		CRY_ASSERT(eHWSC_Compute  == (&shaderPass.m_CShader - &shaderPass.m_VShader));
 
 		EShaderStage validShaderStages = EShaderStage_None;
 
@@ -67,7 +68,7 @@ EShaderStage SDeviceObjectHelpers::GetShaderInstanceInfo(THwShaderInfo& result, 
 				Ident.m_pipelineState = pipelineState ? pipelineState[shaderStage] : UPipelineState();
 
 				bool isShaderValid = false;
-				if (auto pInstance = pHWShaderD3D->mfGetInstance(pShader, Ident, 0))
+				if (auto pInstance = pHWShaderD3D->mfGetInstance(Ident, 0))
 				{
 					if (pHWShaderD3D->CheckActivation(pShader, pInstance, 0))
 					{
@@ -78,7 +79,7 @@ EShaderStage SDeviceObjectHelpers::GetShaderInstanceInfo(THwShaderInfo& result, 
 						else
 						{
 							result[shaderStage].pHwShaderInstance = pInstance;
-							result[shaderStage].pDeviceShader = pInstance->m_Handle.m_pShader->m_pHandle;
+							result[shaderStage].pDeviceShader = pInstance->m_Handle.m_pShader->GetHandle();
 
 							validShaderStages |= SHADERSTAGE_FROM_SHADERCLASS(shaderStage);
 						}
@@ -167,19 +168,22 @@ bool SDeviceObjectHelpers::CShaderConstantManager::AllocateShaderReflection(::CS
 		{
 			SShaderPass& shaderPass = pShaderTechnique->m_Passes[0];
 
-			CHWShader* pHWShaders[] =
-			{
-				shaderPass.m_VShader,
-				shaderPass.m_PShader,
-				shaderPass.m_GShader,
-				shaderPass.m_CShader,
-				shaderPass.m_DShader,
-				shaderPass.m_HShader,
-			};
+			// Shader pointers are consecutive
+			CHWShader** pHWShaders = &shaderPass.m_VShader;
+			
+			// Compile time evaluable, should produce no code
+			CRY_ASSERT(eHWSC_Vertex   == (&shaderPass.m_VShader - &shaderPass.m_VShader));
+			CRY_ASSERT(eHWSC_Pixel    == (&shaderPass.m_PShader - &shaderPass.m_VShader));
+			CRY_ASSERT(eHWSC_Geometry == (&shaderPass.m_GShader - &shaderPass.m_VShader));
+			CRY_ASSERT(eHWSC_Domain   == (&shaderPass.m_DShader - &shaderPass.m_VShader));
+			CRY_ASSERT(eHWSC_Hull     == (&shaderPass.m_HShader - &shaderPass.m_VShader));
+			CRY_ASSERT(eHWSC_Compute  == (&shaderPass.m_CShader - &shaderPass.m_VShader));
 
-			for (EHWShaderClass shaderClass = eHWSC_Vertex; shaderClass < eHWSC_Num; shaderClass = EHWShaderClass(shaderClass + 1))
+			// Shader stages are ordered by usage-frequency and loop exists according to usage-frequency (VS+PS fast, etc.)
+			int validShaderStages = shaderStages;
+			for (EHWShaderClass shaderClass = eHWSC_Vertex; validShaderStages; shaderClass = EHWShaderClass(shaderClass + 1), validShaderStages >>= 1)
 			{
-				if (shaderStages & SHADERSTAGE_FROM_SHADERCLASS(shaderClass))
+				if (validShaderStages & 1)
 				{
 					CRY_ASSERT(pHWShaders[shaderClass]);
 					CRY_ASSERT_MESSAGE(m_pShaderReflection->bufferCount < MaxReflectedBuffers, "Maximum reflected buffer count exceeded. Feel free to increase if necessary");
@@ -224,7 +228,7 @@ void SDeviceObjectHelpers::CShaderConstantManager::InitShaderReflection(CDeviceG
 	{
 		auto& updateContext = m_pShaderReflection->bufferUpdateContexts[i];
 		CHWShader_D3D::SHWSInstance* pInstance = reinterpret_cast<CHWShader_D3D::SHWSInstance*>(pipelineState.m_pHwShaderInstances[updateContext.shaderClass]);
-		maxVectorCount = max(maxVectorCount, pInstance->m_nMaxVecs[eConstantBufferShaderSlot_PerBatch]);
+		maxVectorCount = max(maxVectorCount, pInstance->m_nMaxVecs[eConstantBufferShaderSlot_PerDraw]);
 	}
 
 	CryStackAllocWithSizeVectorCleared(Vec4, maxVectorCount, zeroMem, CDeviceBufferManager::AlignBufferSizeForStreaming);
@@ -238,12 +242,11 @@ void SDeviceObjectHelpers::CShaderConstantManager::InitShaderReflection(CDeviceG
 		CRY_ASSERT(pipelineState.m_pHwShaderInstances[updateContext.shaderClass]);
 		
 		CHWShader_D3D::SHWSInstance* pInstance = reinterpret_cast<CHWShader_D3D::SHWSInstance*>(pipelineState.m_pHwShaderInstances[updateContext.shaderClass]);
-		CRY_ASSERT(pInstance->m_nMaxVecs[eConstantBufferShaderSlot_PerInstanceLegacy] == 0); // Legacy per instance constants are not supported anymore
-		CRY_ASSERT(pInstance->m_nMaxVecs[eConstantBufferShaderSlot_PerBatch] > 0);           // No per batch shader constants. Shader reflection not required.
+		CRY_ASSERT(pInstance->m_nMaxVecs[eConstantBufferShaderSlot_PerDraw] > 0);           // No per batch shader constants. Shader reflection not required.
 
 		updateContext.pShaderInstance = pInstance;
 
-		const size_t bufferSize = sizeof(Vec4) * pInstance->m_nMaxVecs[eConstantBufferShaderSlot_PerBatch];
+		const size_t bufferSize = sizeof(Vec4) * pInstance->m_nMaxVecs[eConstantBufferShaderSlot_PerDraw];
 		const size_t updateSize = CDeviceBufferManager::AlignBufferSizeForStreaming(bufferSize);
 
 		if (bufferSize)
@@ -266,14 +269,13 @@ void SDeviceObjectHelpers::CShaderConstantManager::InitShaderReflection(CDeviceC
 	CHWShader_D3D::SHWSInstance* pInstance = reinterpret_cast<CHWShader_D3D::SHWSInstance*>(pipelineState.m_pHwShaderInstance);
 	updateContext.pShaderInstance = pInstance;
 
-	CRY_ASSERT(pInstance->m_nMaxVecs[eConstantBufferShaderSlot_PerInstanceLegacy] == 0); // Legacy per instance constants are not supported anymore
-	CRY_ASSERT(pInstance->m_nMaxVecs[eConstantBufferShaderSlot_PerBatch] > 0);           // No per batch shader constants. Shader reflection not required.
+	CRY_ASSERT(pInstance->m_nMaxVecs[eConstantBufferShaderSlot_PerDraw] > 0);           // No per batch shader constants. Shader reflection not required.
 
-	if (pInstance->m_nMaxVecs[eConstantBufferShaderSlot_PerBatch] > 0)
+	if (pInstance->m_nMaxVecs[eConstantBufferShaderSlot_PerDraw] > 0)
 	{
-		CryStackAllocWithSizeVectorCleared(Vec4, pInstance->m_nMaxVecs[eConstantBufferShaderSlot_PerBatch], zeroMem, CDeviceBufferManager::AlignBufferSizeForStreaming);
+		CryStackAllocWithSizeVectorCleared(Vec4, pInstance->m_nMaxVecs[eConstantBufferShaderSlot_PerDraw], zeroMem, CDeviceBufferManager::AlignBufferSizeForStreaming);
 
-		const size_t bufferSize = sizeof(Vec4) * pInstance->m_nMaxVecs[eConstantBufferShaderSlot_PerBatch];
+		const size_t bufferSize = sizeof(Vec4) * pInstance->m_nMaxVecs[eConstantBufferShaderSlot_PerDraw];
 		const size_t updateSize = CDeviceBufferManager::AlignBufferSizeForStreaming(bufferSize);
 
 		m_constantBuffers[updateContext.bufferIndex].pBuffer = gcpRendD3D->m_DevBufMan.CreateConstantBuffer(bufferSize);

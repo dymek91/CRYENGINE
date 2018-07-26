@@ -19,7 +19,7 @@ struct ObscuranceConstants
 void CScreenSpaceObscuranceStage::Init()
 {
 	m_passObscurance.SetPrimitiveFlags(CRenderPrimitive::eFlags_ReflectShaderConstants_VS);
-	m_passObscurance.AllocateTypedConstantBuffer<ObscuranceConstants>(eConstantBufferShaderSlot_PerBatch, EShaderStage_Pixel);
+	m_passObscurance.AllocateTypedConstantBuffer<ObscuranceConstants>(eConstantBufferShaderSlot_PerPrimitive, EShaderStage_Pixel);
 }
 
 void CScreenSpaceObscuranceStage::Execute()
@@ -93,7 +93,7 @@ void CScreenSpaceObscuranceStage::Execute()
 				viewSpaceParams[i] = Vec4(2.0f / projMat.m00, 2.0f / projMat.m11, (-1.0f + stereoShift) / projMat.m00, -1.0f / projMat.m11);
 			}
 			
-			auto constants = m_passObscurance.BeginTypedConstantUpdate<ObscuranceConstants>(eConstantBufferShaderSlot_PerBatch, EShaderStage_Pixel);
+			auto constants = m_passObscurance.BeginTypedConstantUpdate<ObscuranceConstants>(eConstantBufferShaderSlot_PerPrimitive, EShaderStage_Pixel);
 
 			constants->screenSize = Vec4((float)CRendererResources::s_ptexLinearDepth->GetWidth(), (float)CRendererResources::s_ptexLinearDepth->GetHeight(), 1.0f / (float)CRendererResources__s_ptexSceneSpecular->GetWidth(), 1.0f / (float)CRendererResources__s_ptexSceneSpecular->GetHeight());
 			constants->nearFarClipDist = Vec4(viewInfo[0].nearClipPlane, viewInfo[0].farClipPlane, 0, 0);
@@ -140,7 +140,7 @@ void CScreenSpaceObscuranceStage::Execute()
 		const int32 srcSizeX = CRendererResources__s_ptexSceneSpecular->GetWidth();
 		const int32 srcSizeY = CRendererResources__s_ptexSceneSpecular->GetHeight();
 
-		if (m_passFilter.InputChanged(bLowResOutput))
+		if (m_passFilter.IsDirty(bLowResOutput))
 		{
 			static CCryNameTSCRC techFilter("SSDO_Filter");
 			m_passFilter.SetPrimitiveFlags(CRenderPrimitive::eFlags_ReflectShaderConstants_PS);

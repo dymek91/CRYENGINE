@@ -50,6 +50,7 @@ struct ICryPerfHUD;
 class CNULLRenderAuxGeom;
 class CManualFrameStepController;
 class CProjectManager;
+struct DisplayContext;
 
 namespace minigui
 {
@@ -255,7 +256,7 @@ public:
 
 	const char*                       GetRootFolder() const override  { return m_root.c_str(); }
 
-	virtual bool                        DoFrame(const SDisplayContextKey& displayContextKey, CEnumFlags<ESystemUpdateFlags> updateFlags = CEnumFlags<ESystemUpdateFlags>()) override;
+	virtual bool                        DoFrame(const SDisplayContextKey& displayContextKey = SDisplayContextKey{}, CEnumFlags<ESystemUpdateFlags> updateFlags = CEnumFlags<ESystemUpdateFlags>()) override;
 	virtual IManualFrameStepController* GetManualFrameStepController() const override;
 
 	virtual bool                      UpdateLoadtime() override;
@@ -407,7 +408,7 @@ public:
 	virtual Serialization::IArchiveHost* GetArchiveHost() const override         { return m_pArchiveHost; }
 
 	void                                 SetViewCamera( CCamera& Camera) override;
-	CCamera&                             GetViewCamera() override                { return m_ViewCamera; }
+	const CCamera&                       GetViewCamera() const override          { return m_ViewCamera; }
 
 	virtual uint32                       GetCPUFlags() override                  { return m_pCpu ? m_pCpu->GetFeatures() : 0; }
 	virtual int                          GetLogicalCPUCount() override           { return m_pCpu ? m_pCpu->GetLogicalCPUCount() : 0; }

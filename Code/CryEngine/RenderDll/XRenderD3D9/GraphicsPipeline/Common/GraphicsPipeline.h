@@ -90,6 +90,17 @@ public:
 	void ClearState();
 	void ClearDeviceState();
 
+	template<class T> T* GetOrCreateUtilityPass()
+	{
+		IUtilityRenderPass::EPassId id = T::GetPassId();
+		auto& cache = m_utilityPassCaches[uint32(id)];
+		if (cache.numUsed >= cache.utilityPasses.size())
+		{
+			cache.utilityPasses.emplace_back(new T);
+		}
+		return static_cast<T*>(cache.utilityPasses[cache.numUsed++].get());
+	}
+
 protected:
 	template<class T> void RegisterStage(T*& pPipelineStage, uint32 stageID)
 	{
@@ -105,7 +116,6 @@ protected:
 	// Their stage ID is used to index into the PSO cache.
 	template<class T, uint32 stageID> void RegisterSceneStage(T*& pPipelineStage)
 	{
-		static_assert(stageID < MAX_PIPELINE_SCENE_STAGES, "Invalid ID for scene stage");
 		RegisterStage<T>(pPipelineStage, stageID);
 	}
 
@@ -129,17 +139,6 @@ protected:
 				pStage->Resize(renderWidth, renderHeight);
 			}
 		}
-	}
-
-	template<class T> T* GetOrCreateUtilityPass()
-	{
-		IUtilityRenderPass::EPassId id = T::GetPassId();
-		auto& cache = m_utilityPassCaches[uint32(id)];
-		if (cache.numUsed >= cache.utilityPasses.size())
-		{
-			cache.utilityPasses.emplace_back(new T);
-		}
-		return static_cast<T*>(cache.utilityPasses[cache.numUsed++].get());
 	}
 
 	void ResetUtilityPassCache()

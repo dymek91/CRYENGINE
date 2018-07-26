@@ -48,6 +48,13 @@ void CPostEffectContext::Setup(CPostEffectsMgr* pPostEffectsMgr)
 		m_shaderRTMask |= (quality | quality1);
 		break;
 	}
+
+	m_bUseAltBackBuffer = false;
+}
+
+void CPostEffectContext::EnableAltBackBuffer(bool enable)
+{
+	m_bUseAltBackBuffer = enable;
 }
 
 uint64 CPostEffectContext::GetShaderRTMask() const
@@ -62,6 +69,8 @@ CTexture* CPostEffectContext::GetSrcBackBufferTexture() const
 
 CTexture* CPostEffectContext::GetDstBackBufferTexture() const
 {
+	if (m_bUseAltBackBuffer)
+		return CRendererResources::s_ptexSceneDiffuse;
 	return GetRenderView()->GetColorTarget();
 }
 
@@ -123,6 +132,7 @@ void CPostEffectStage::Init()
 //	m_postEffectArray[EPostEffectID::AlienInterference   ] = stl::make_unique<CAlienInterferencePass   >();
 	m_postEffectArray[EPostEffectID::PostStereo          ] = stl::make_unique<CPostStereoPass          >();
 	m_postEffectArray[EPostEffectID::HUD3D               ] = stl::make_unique<CHud3DPass               >();
+	m_postEffectArray[EPostEffectID::ScreenFader         ] = stl::make_unique<CScreenFaderPass         >();
 //	m_postEffectArray[EPostEffectID::Post3DRenderer      ] = stl::make_unique<CPost3DRendererPass      >();
 
 	for (auto& pPostEffect : m_postEffectArray)
@@ -202,8 +212,7 @@ bool CPostEffectStage::Execute()
 	m_context.Setup(pPostMgr);
 	m_context.SetRenderView(RenderView());
 
-	const auto tempRT = CRendererResources::s_ptexSceneDiffuse;
-	bool usingTempRTs = true;
+	m_context.EnableAltBackBuffer(true);
 
 	for (CPostEffectItor pItor = pPostMgr->GetEffects().begin(), pItorEnd = pPostMgr->GetEffects().end(); pItor != pItorEnd; ++pItor)
 	{
@@ -233,13 +242,13 @@ bool CPostEffectStage::Execute()
 			const auto id = pCurrEffect->GetID();
 
 			if (id >= EPostEffectID::PostAA)
-				usingTempRTs = false;
+				m_context.EnableAltBackBuffer(false);
 
 			uint32 nRenderFlags = pCurrEffect->GetRenderFlags();
 			if (nRenderFlags & PSP_UPDATE_BACKBUFFER)
 			{
 				CTexture* pDstTex = m_context.GetSrcBackBufferTexture();
-				CTexture* pSrcTex = usingTempRTs ? m_context.GetDstBackBufferTexture() : tempRT;
+				CTexture* pSrcTex = m_context.GetDstBackBufferTexture();
 
 				m_passCopyScreenToTex.Execute(pSrcTex, pDstTex);
 			}
@@ -286,7 +295,7 @@ bool CPostEffectStage::Execute()
 
 		auto& pass = m_passAntialiasingDebug;
 
-		if (pass.InputChanged(pSrcTex->GetID(), pDstTex->GetID()))
+		if (pass.IsDirty(pSrcTex->GetID(), pDstTex->GetID()))
 		{
 			static CCryNameTSCRC pszTechName("DebugPostAA");
 			pass.SetPrimitiveFlags(CRenderPrimitive::eFlags_ReflectShaderConstants_PS);
@@ -467,7 +476,7 @@ void CUnderwaterGodRaysPass::Execute(const CPostEffectContext& context)
 		{
 			auto& pass = m_passUnderwaterGodRaysGen[r];
 
-			if (pass.InputChanged(rtMask, pSrcBackBufferTexture->GetID()))
+			if (pass.IsDirty(rtMask, pSrcBackBufferTexture->GetID()))
 			{
 				static CCryNameTSCRC techName("UnderwaterGodRays");
 				pass.SetTechnique(CShaderMan::s_shPostEffects, techName, rtMask);
@@ -501,7 +510,7 @@ void CUnderwaterGodRaysPass::Execute(const CPostEffectContext& context)
 		CTexture* pSrcTex = context.GetSrcBackBufferTexture();
 		CTexture* pDstTex = context.GetDstBackBufferTexture();
 
-		if (pass.InputChanged(pDstTex->GetID(), pSrcTex->GetID()))
+		if (pass.IsDirty(pDstTex->GetID(), pSrcTex->GetID()))
 		{
 			static CCryNameTSCRC techName("UnderwaterGodRaysFinal");
 			pass.SetPrimitiveFlags(CRenderPrimitive::eFlags_ReflectShaderConstants_PS);
@@ -563,7 +572,7 @@ void CWaterDropletsPass::Execute(const CPostEffectContext& context)
 	CTexture* pSrcTex = context.GetSrcBackBufferTexture();
 	CTexture* pDstTex = context.GetDstBackBufferTexture();
 
-	if (pass.InputChanged(pDstTex->GetID(), pSrcTex->GetID()))
+	if (pass.IsDirty(pDstTex->GetID(), pSrcTex->GetID()))
 	{
 		static CCryNameTSCRC techName("WaterDroplets");
 		pass.SetPrimitiveFlags(CRenderPrimitive::eFlags_ReflectShaderConstants_PS);
@@ -627,7 +636,7 @@ void CWaterFlowPass::Execute(const CPostEffectContext& context)
 	CTexture* pSrcTex = context.GetSrcBackBufferTexture();
 	CTexture* pDstTex = context.GetDstBackBufferTexture();
 
-	if (pass.InputChanged(pDstTex->GetID(), pSrcTex->GetID()))
+	if (pass.IsDirty(pDstTex->GetID(), pSrcTex->GetID()))
 	{
 		static CCryNameTSCRC techName("WaterFlow");
 		pass.SetPrimitiveFlags(CRenderPrimitive::eFlags_ReflectShaderConstants_PS);
@@ -687,7 +696,7 @@ void CSharpeningPass::Execute(const CPostEffectContext& context)
 	CTexture* pSrcTex = context.GetSrcBackBufferTexture();
 	CTexture* pDstTex = context.GetDstBackBufferTexture();
 
-	if (pass.InputChanged(pDstTex->GetID(), pSrcTex->GetID(), CRendererResources::s_ptexBackBufferScaled[0]->GetID()))
+	if (pass.IsDirty(pDstTex->GetID(), pSrcTex->GetID()))
 	{
 		static CCryNameTSCRC techName("CA_Sharpening");
 		pass.SetPrimitiveFlags(CRenderPrimitive::eFlags_ReflectShaderConstants_PS);
@@ -750,7 +759,7 @@ void CBlurringPass::Execute(const CPostEffectContext& context)
 	CTexture* pSrcTex = context.GetSrcBackBufferTexture();
 	CTexture* pDstTex = context.GetDstBackBufferTexture();
 
-	if (pass.InputChanged(pDstTex->GetID(), pSrcTex->GetID(), CRendererResources::s_ptexBackBufferScaled[0]->GetID()))
+	if (pass.IsDirty(pDstTex->GetID(), pSrcTex->GetID()))
 	{
 		static CCryNameTSCRC techName("BlurInterpolation");
 		pass.SetPrimitiveFlags(CRenderPrimitive::eFlags_ReflectShaderConstants_PS);
@@ -821,7 +830,7 @@ void CUberGamePostEffectPass::Execute(const CPostEffectContext& context)
 		CTexture* pSrcTex = context.GetSrcBackBufferTexture();
 		CTexture* pDstTex = context.GetDstBackBufferTexture();
 
-		if (pass.InputChanged(pDstTex->GetID(), pSrcTex->GetID(), pMaskTex->GetID(), postEffectMask))
+		if (pass.IsDirty(pDstTex->GetID(), pSrcTex->GetID(), pMaskTex->GetID(), postEffectMask))
 		{
 			static CCryNameTSCRC techName("UberGamePostProcess");
 			pass.SetPrimitiveFlags(CRenderPrimitive::eFlags_ReflectShaderConstants_PS);
@@ -902,7 +911,7 @@ void CFlashBangPass::Execute(const CPostEffectContext& context)
 			SAFE_DELETE(postEffect.m_pGhostImage);
 
 			const int flags = FT_USAGE_RENDERTARGET | FT_NOMIPS;
-			postEffect.m_pGhostImage = new SDynTexture(pSrcTex->GetWidth() >> 1, pSrcTex->GetHeight() >> 1, eTF_R8G8B8A8, eTT_2D, flags, "GhostImageTempRT");
+			postEffect.m_pGhostImage = new SDynTexture(pSrcTex->GetWidth() >> 1, pSrcTex->GetHeight() >> 1, Clr_Transparent, eTF_R8G8B8A8, eTT_2D, flags, "GhostImageTempRT");
 			postEffect.m_pGhostImage->Update(pSrcTex->GetWidth() >> 1, pSrcTex->GetHeight() >> 1);
 
 			if (postEffect.m_pGhostImage && postEffect.m_pGhostImage->m_pTexture)
@@ -940,7 +949,7 @@ void CFlashBangPass::Execute(const CPostEffectContext& context)
 
 		CTexture* pDstTex = context.GetDstBackBufferTexture();
 
-		if (pass.InputChanged(pDstTex->GetID(), pSrcTex->GetID(), postEffect.m_pGhostImage->m_pTexture->GetID()))
+		if (pass.IsDirty(pDstTex->GetID(), pSrcTex->GetID(), postEffect.m_pGhostImage->m_pTexture->GetID()))
 		{
 			static CCryNameTSCRC techName("FlashBang");
 			pass.SetPrimitiveFlags(CRenderPrimitive::eFlags_ReflectShaderConstants_PS);
@@ -1008,7 +1017,7 @@ void CPostStereoPass::Execute(const CPostEffectContext& context)
 
 		auto& pass = m_passNearMask;
 
-		if (pass.InputChanged(pTmpMaskTex->GetID()))
+		if (pass.IsDirty(pTmpMaskTex->GetID()))
 		{
 			static CCryNameTSCRC techName("StereoNearMask");
 			pass.SetPrimitiveFlags(CRenderPrimitive::eFlags_ReflectShaderConstants_PS);
@@ -1041,7 +1050,7 @@ void CPostStereoPass::Execute(const CPostEffectContext& context)
 		auto* pLeftEyeTex = leftDc->GetCurrentBackBuffer();
 		auto* pRightEyeTex = rightDc->GetCurrentBackBuffer();
 
-		if (pass.InputChanged(pLeftEyeTex->GetID(), pRightEyeTex->GetID(), pSrcBackBufferTexture->GetID()))
+		if (pass.IsDirty(pLeftEyeTex->GetID(), pRightEyeTex->GetID(), pSrcBackBufferTexture->GetID()))
 		{
 			static CCryNameTSCRC techName("PostStereo");
 			pass.SetPrimitiveFlags(CRenderPrimitive::eFlags_ReflectShaderConstants_PS);
@@ -1119,7 +1128,7 @@ void CKillCameraPass::Execute(const CPostEffectContext& context)
 		CTexture* pSrcTex = context.GetSrcBackBufferTexture();
 		CTexture* pDsttex = context.GetDstBackBufferTexture();
 
-		if (pass.InputChanged(pDsttex->GetID(), pSrcTex->GetID()))
+		if (pass.IsDirty(pDsttex->GetID(), pSrcTex->GetID()))
 		{
 			static CCryNameTSCRC techName("KillCameraFilter");
 			pass.SetPrimitiveFlags(CRenderPrimitive::eFlags_ReflectShaderConstants_PS);
@@ -1263,7 +1272,7 @@ void CScreenBloodPass::Execute(const CPostEffectContext& context)
 
 	CTexture* pDstTex = context.GetDstBackBufferTexture();
 
-	if (pass.InputChanged(pDstTex->GetID()))
+	if (pass.IsDirty(pDstTex->GetID()))
 	{
 		static CCryNameTSCRC techName("ScreenBlood");
 		pass.SetPrimitiveFlags(CRenderPrimitive::eFlags_ReflectShaderConstants_PS);
@@ -1299,6 +1308,55 @@ void CScreenBloodPass::Execute(const CPostEffectContext& context)
 	Vec4 pParams = Vec4(overscanBorders.x, overscanBorders.y, alpha, borderScale);
 	static CCryNameR pParamName("psParams");
 	pass.SetConstant(pParamName, pParams);
+
+	pass.Execute();
+}
+
+//////////////////////////////////////////////////////////////////////////
+
+void CScreenFaderPass::Init()
+{}
+
+void CScreenFaderPass::Execute(const CPostEffectContext& context)
+{
+	const CEffectParam* pColor = context.GetEffectParamByName("ScreenFader_Color");
+	CRY_ASSERT(pColor != nullptr);
+
+	if (!pColor)
+	{
+		return;
+	}
+
+	PROFILE_LABEL_SCOPE("SCREEN FADER");
+
+	CD3D9Renderer* const RESTRICT_POINTER rd = gcpRendD3D;
+
+	auto& pass = m_passScreenFader;
+	const Vec4 &color = pColor->GetParamVec4();
+
+	CTexture* pDstTex = context.GetDstBackBufferTexture();
+
+	if (pass.IsDirty(pDstTex->GetID()))
+	{
+		static CCryNameTSCRC techTexToTex("TextureToTextureTinted");
+		pass.SetPrimitiveFlags(CRenderPrimitive::eFlags_ReflectShaderConstants_PS);
+		pass.SetPrimitiveType(CRenderPrimitive::ePrim_ProceduralTriangle);
+		pass.SetTechnique(CShaderMan::s_shPostEffects, techTexToTex, 0);
+		pass.SetState(GS_NODEPTHTEST | GS_BLSRC_SRCALPHA | GS_BLDST_ONEMINUSSRCALPHA);
+
+		pass.SetRenderTarget(0, pDstTex);
+
+		pass.SetTexture(0, CRendererResources::s_ptexWhite);
+
+		pass.SetSampler(0, EDefaultSamplerStates::PointClamp);
+
+		pass.SetRequirePerViewConstantBuffer(true);
+	}
+
+	pass.BeginConstantUpdate();
+
+	static CCryNameR paramName("texToTexParams2");
+	pass.SetConstant(paramName, color);
 
 	pass.Execute();
 }
@@ -1372,13 +1430,9 @@ void CHudSilhouettesPass::ExecuteDeferredSilhouettesOptimised(const CPostEffectC
 		// Down Sample
 		m_passStrechRect.Execute(CRendererResources::s_ptexSceneNormalsMap, CRendererResources::s_ptexBackBufferScaled[0]);
 
-		CD3D9Renderer* const RESTRICT_POINTER rd = gcpRendD3D;
-
 		auto& pass = m_passDeferredSilhouettesOptimised;
-
 		CTexture* pDstTex = context.GetDstBackBufferTexture();
-
-		if (pass.InputChanged(pDstTex->GetID(), CRendererResources::s_ptexBackBufferScaled[0]->GetID()))
+		if (pass.IsDirty(pDstTex->GetID()))
 		{
 			static CCryNameTSCRC techName("DeferredSilhouettesOptimised");
 			pass.SetTechnique(CShaderMan::s_shPostEffectsGame, techName, 0);

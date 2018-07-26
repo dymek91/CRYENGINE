@@ -29,10 +29,9 @@ class CStaticDeviceObjectStorage
 public:
 	typedef std::pair<SDescription, CDeviceObject*> Element;
 
-	THandle GetHandle(const SDescription& pDescr) const threadsafe
+	THandle GetHandle(const SDescription& pDescr) threadsafe
 	{
 		CryAutoReadLock<CryRWLock> lock(m_accessLock);
-
 		m_accessLock.RLock();
 		const uint32 nContainerSize = m_Container.size();
 		for (uint32 i = 0; i < nContainerSize; i++)
@@ -159,6 +158,7 @@ private:
 		static void AllocatePredefined ## TypeName ## s();                                                                                                                                                      \
 		static void Reset   ## TypeName ## s() { s_ ## TypeName ## s.Release(PreAllocated); }                                                                                                                   \
 		static void Release ## TypeName ## s() { s_ ## TypeName ## s.Release(0); }                                                                                                                              \
+		static size_t Count ## TypeName ## s() { return s_ ## TypeName ## s.Size(); }                                                                                                                           \
 		                                                                                                                                                                                                        \
 		static TypeName ## Handle Get         ## TypeName ## Handle(const S ## TypeName & pState) { return s_ ## TypeName ## s.GetHandle        (pState); }                                                     \
 		static TypeName ## Handle GetOrCreate ## TypeName ## Handle(const S ## TypeName & pState) { return s_ ## TypeName ## s.GetOrCreateHandle(pState); }                                                     \
@@ -343,8 +343,9 @@ private:
 #define PlaceComposedDeviceObjectManagementAPI(TypeName, bRetryable, TypeCreator, PreAllocated)                                                                                                                 \
 	public:                                                                                                                                                                                                     \
 		void AllocatePredefined ## TypeName ## s();                                                                                                                                                             \
-		void Reset ## TypeName ## s() { m_ ## TypeName ## s.Release(PreAllocated); }                                                                                                                            \
+		void Reset   ## TypeName ## s() { m_ ## TypeName ## s.Release(PreAllocated); }                                                                                                                          \
 		void Release ## TypeName ## s() { m_ ## TypeName ## s.Release(0); }                                                                                                                                     \
+		size_t Count ## TypeName ## s() { return m_ ## TypeName ## s.Size(); }                                                                                                                                  \
 		                                                                                                                                                                                                        \
 		TypeName ## Handle Get         ## TypeName ## Handle(const S ## TypeName pDesc) const { return m_ ## TypeName ## s.GetHandle        (pDesc); }                                                          \
 		TypeName ## Handle GetOrCreate ## TypeName ## Handle(const S ## TypeName pDesc)       { return m_ ## TypeName ## s.GetOrCreateHandle(pDesc); }                                                          \
@@ -385,7 +386,7 @@ struct SDeviceObjectHelpers
 
 	struct SConstantBufferBindInfo
 	{
-		EConstantBufferShaderSlot   shaderSlot   = eConstantBufferShaderSlot_PerBatch;
+		EConstantBufferShaderSlot   shaderSlot   = eConstantBufferShaderSlot_PerDraw;
 		EShaderStage                shaderStages = EShaderStage_All;
 		_smart_ptr<CConstantBuffer> pBuffer;
 
@@ -453,8 +454,8 @@ struct SDeviceObjectHelpers
 
 	class CShaderConstantManager
 	{
-		static const EConstantBufferShaderSlot ReflectedBufferShaderSlot = eConstantBufferShaderSlot_PerBatch;  // Which constant buffer is used for reflection
-		static const int                       MaxReflectedBuffers       = 2;                                   // Currently at most vertex and pixel stages required
+		static const EConstantBufferShaderSlot ReflectedBufferShaderSlot = eConstantBufferShaderSlot_PerDraw;  // Which constant buffer is used for reflection
+		static const int                       MaxReflectedBuffers       = 2;                                  // Currently at most vertex and pixel stages required
 
 	public:
 		CShaderConstantManager();

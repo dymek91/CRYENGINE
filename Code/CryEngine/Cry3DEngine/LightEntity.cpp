@@ -283,6 +283,11 @@ int CLightEntity::UpdateGSMLightSourceDynamicShadowFrustum(int nDynamicLodCount,
 {
 	assert(m_pTerrain);
 
+	int nLod = 0;
+
+	if (GetCVars()->e_Shadows == 2 && (m_light.m_Flags & DLF_SUN) == 0) return nLod;
+	if (GetCVars()->e_Shadows == 3 && (m_light.m_Flags & DLF_SUN) != 0) return nLod;
+
 	float fGSMBoxSize = fGSMBoxSizeNextDynamicLod = (float)Get3DEngine()->m_fGsmRange;
 	Vec3 vCameraDir = passInfo.GetCamera().GetMatrix().GetColumn(1).GetNormalized();
 	float fDistToLight = passInfo.GetCamera().GetPosition().GetDistance(GetPos(true));
@@ -295,7 +300,6 @@ int CLightEntity::UpdateGSMLightSourceDynamicShadowFrustum(int nDynamicLodCount,
 	}
 
 	// prepare shadow frustums
-	int nLod;
 
 	//compute distance for first LOD
 	Vec3 vEdgeScreen = passInfo.GetCamera().GetEdgeN();
@@ -303,7 +307,7 @@ int CLightEntity::UpdateGSMLightSourceDynamicShadowFrustum(int nDynamicLodCount,
 	vEdgeScreen.y = min(vEdgeScreen.y, DRAW_NEAREST_MIN);
 	float fDistanceFromView = fDistanceFromViewNextDynamicLod = GSM_GetLODProjectionCenter(vEdgeScreen, Get3DEngine()->m_fGsmRange);
 
-	for (nLod = 0; nLod < nDynamicLodCount + nDistanceLodCount; nLod++)
+	for (; nLod < nDynamicLodCount + nDistanceLodCount; nLod++)
 	{
 		const float fFOV = (m_light).m_fLightFrustumAngle * 2;
 		const bool bDoGSM = !!(m_light.m_Flags & DLF_SUN);
@@ -569,6 +573,7 @@ void CLightEntity::InitShadowFrustum_SUN_Conserv(ShadowMapFrustum* pFr, int dwAl
 
 	pFr->Invalidate();
 
+	pFr->nOmniFrustumMask.set(0);
 	pFr->nShadowMapLod = nLod;
 	pFr->vLightSrcRelPos = m_light.m_Origin - passInfo.GetCamera().GetPosition();
 	pFr->fRadius = m_light.m_fRadius;
@@ -2116,6 +2121,7 @@ void CLightEntity::ProcessPerObjectFrustum(ShadowMapFrustum* pFr, struct SPerObj
 	pFr->nTexSize = 1 << IntegerLog2(nTexSize);
 	pFr->nTextureWidth = pFr->nTexSize;
 	pFr->nTextureHeight = pFr->nTexSize;
+	pFr->clearValue = pFr->clearValue;
 	pFr->bBlendFrustum = false;
 
 	// now update frustum params based on object box

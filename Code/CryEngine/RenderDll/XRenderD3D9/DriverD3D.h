@@ -81,6 +81,10 @@ class IBenchmarkRendererSensor;
 class CAsyncShaderTask;
 #endif
 
+#if !defined(ENABLE_RENDER_AUX_GEOM)
+class CAuxGeomCBCollector;
+#endif
+
 enum class EWindowState
 {
 	//! Normal window with borders
@@ -149,8 +153,8 @@ public:
 	//	static unsigned int GetNumBackBufferIndices(const DXGI_SWAP_CHAIN_DESC& scDesc);
 	//	static unsigned int GetCurrentBackBufferIndex(SDisplayContext* pContext);
 
-	virtual void     LockParticleVideoMemory() override;
-	virtual void     UnLockParticleVideoMemory() override;
+	virtual void     LockParticleVideoMemory(int frameId) override;
+	virtual void     UnLockParticleVideoMemory(int frameId) override;
 	virtual void     ActivateLayer(const char* pLayerName, bool activate) override;
 
 	void             SetDefaultTexParams(bool bUseMips, bool bRepeat, bool bLoad);
@@ -283,9 +287,9 @@ public:
 
 	//===============================================================================
 
-	virtual void RT_FlashRenderInternal(IFlashPlayer* pPlayer) override;
-	virtual void RT_FlashRenderInternal(IFlashPlayer_RenderProxy* pPlayer, bool bDoRealRender) override;
-	virtual void RT_FlashRenderPlaybackLocklessInternal(IFlashPlayer_RenderProxy* pPlayer, int cbIdx, bool bFinalPlayback, bool bDoRealRender) override;
+	virtual void RT_FlashRenderInternal(std::shared_ptr<IFlashPlayer> &&pPlayer) override;
+	virtual void RT_FlashRenderInternal(std::shared_ptr<IFlashPlayer_RenderProxy> &&pPlayer, bool bDoRealRender) override;
+	virtual void RT_FlashRenderPlaybackLocklessInternal(std::shared_ptr<IFlashPlayer_RenderProxy> &&pPlayer, int cbIdx, bool bFinalPlayback, bool bDoRealRender) override;
 
 	//===============================================================================
 
@@ -317,9 +321,6 @@ public:
 #endif
 	bool             IsCurrentContextMainVP();
 	/////////////////////////////////////////////////////////////////////////////////
-
-	virtual int  CreateRenderTarget(int nWidth, int nHeight, const ColorF& cClear, ETEX_Format eTF = eTF_R8G8B8A8) override;
-	virtual bool DestroyRenderTarget(int nHandle) override;
 
 	//! Changes resolution of the window/device (doesn't require to reload the level)
 	bool         ChangeRenderResolution(int nNewRenderWidth, int nNewRenderHeight, CRenderView* pRenderView);
@@ -523,7 +524,7 @@ public:
 	void                     SF_DrawLineStrip(int baseVertexIndex, int lineCount, const SSF_GlobalDrawParams& __restrict params);
 	void                     SF_DrawGlyphClear(const IScaleformPlayback::DeviceData* vtxData, int baseVertexIndex, const SSF_GlobalDrawParams& __restrict params);
 	void                     SF_DrawBlurRect(const IScaleformPlayback::DeviceData* vtxData, const SSF_GlobalDrawParams& __restrict params);
-	void                     SF_Flush();
+
 	virtual bool             SF_UpdateTexture(int texId, int mipLevel, int numRects, const SUpdateRect* pRects, const unsigned char* pData, size_t pitch, size_t size, ETEX_Format eTF) override;
 	virtual bool             SF_ClearTexture(int texId, int mipLevel, int numRects, const SUpdateRect* pRects, const unsigned char* pData) override;
 #else // #if RENDERER_SUPPORT_SCALEFORM
@@ -551,8 +552,8 @@ public:
 	virtual float* PinOcclusionBuffer(Matrix44A& camera) override;
 	virtual void   UnpinOcclusionBuffer() override;
 
-	virtual void   WaitForParticleBuffer() override;
-	void           InsertParticleVideoDataFence();
+	virtual void   WaitForParticleBuffer(int frameId) override;
+	void           InsertParticleVideoDataFence(int frameId);
 
 	void           RT_UpdateSkinningConstantBuffers(CRenderView* pRenderView);
 
@@ -650,6 +651,7 @@ public:
 	
 
 private:
+#if defined(ENABLE_RENDER_AUX_GEOM)
 	CAuxGeomCBCollector* m_currentAuxGeomCBCollector;
 
 	// Aux Geometry Collector Pool
@@ -665,6 +667,7 @@ private:
 	};
 
 	CAuxGeomCB	m_renderThreadAuxGeom;	
+#endif
 
 public:
 	
@@ -678,8 +681,9 @@ public:
 	CD3DStereoRenderer&            GetS3DRend() const    { return *m_pStereoRenderer; }
 	virtual bool                   IsStereoEnabled() const override;
 
-	virtual const RPProfilerStats* GetRPPStats(ERenderPipelineProfilerStats eStat, bool bCalledFromMainThread = true) override;
-	virtual const RPProfilerStats* GetRPPStatsArray(bool bCalledFromMainThread = true) override;
+	virtual const RPProfilerStats*                   GetRPPStats(ERenderPipelineProfilerStats eStat, bool bCalledFromMainThread = true) override;
+	virtual const RPProfilerStats*                   GetRPPStatsArray(bool bCalledFromMainThread = true) override;
+	virtual const DynArray<RPProfilerDetailedStats>* GetRPPDetailedStatsArray(bool bCalledFromMainThread = true) override;
 
 	virtual int                    GetPolygonCountByType(uint32 EFSList, EVertexCostTypes vct, uint32 z, bool bCalledFromMainThread = true) override;
 
@@ -731,6 +735,7 @@ public:
 
 #if ENABLE_STATOSCOPE
 	IStatoscopeDataGroup * m_pGPUTimesDG;
+	IStatoscopeDataGroup* m_pDetailedRenderTimesDG;
 	IStatoscopeDataGroup* m_pGraphicsDG;
 	IStatoscopeDataGroup* m_pPerformanceOverviewDG;
 #endif
@@ -802,8 +807,6 @@ public:
 	EWindowState             m_windowState = EWindowState::Windowed;
 	bool                     m_isChangingResolution = false;
 	bool					 m_bWindowRestored = false; // Dirty-flag set when the window was restored from minimized state
-
-	std::vector<CTexture*>   m_RTargets;
 
 	static constexpr int         MAX_RT_STACK = 8;
 
@@ -941,6 +944,7 @@ inline DWORD CD3D9Renderer::GetBoundThreadID() const
 ///////////////////////////////////////////////////////////////////////////////
 inline void CD3D9Renderer::WaitForAsynchronousDevice() const
 {
+#if DURANGO_ENABLE_ASYNC_DIPS
 	if (m_nAsyncDeviceState)
 	{
 		CRY_PROFILE_REGION_WAITING(PROFILE_RENDERER, "Sync Async DIPS");
@@ -955,6 +959,7 @@ inline void CD3D9Renderer::WaitForAsynchronousDevice() const
 #endif
 		}
 	}
+#endif
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1000,10 +1005,6 @@ inline CCryPerformanceDeviceContextWrapper& CD3D9Renderer::GetPerformanceDeviceC
 	return m_PerformanceDeviceContextWrapper;
 }
 #endif // DEVICE_SUPPORTS_PERFORMANCE_DEVICE
-
-#if defined(SUPPORT_DEVICE_INFO_USER_DISPLAY_OVERRIDES)
-void UserOverrideDisplayProperties(DXGI_MODE_DESC& desc);
-#endif
 
 extern CD3D9Renderer gcpRendD3D;
 

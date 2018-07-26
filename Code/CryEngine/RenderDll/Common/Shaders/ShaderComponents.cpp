@@ -19,7 +19,7 @@
 #elif CRY_PLATFORM_LINUX || CRY_PLATFORM_ANDROID
 #endif
 
-static void sParseTimeExpr(const char* szScr, const char* szAnnotations, std::vector<STexSamplerFX>* pSamplers, SCGParam* vpp, int nComp, CShader* ef)
+static void sParseTimeExpr(const char* szScr, const char* szAnnotations, SCGParam* vpp, int nComp, CShader* ef)
 {
 	if (szScr)
 	{
@@ -35,7 +35,7 @@ static void sParseTimeExpr(const char* szScr, const char* szAnnotations, std::ve
 	}
 }
 
-static void sParseRuntimeShaderFlag(const char* szScr, const char* szAnnotations, std::vector<STexSamplerFX>* pSamplers, SCGParam* vpp, int nComp, CShader* ef)
+static void sParseRuntimeShaderFlag(const char* szScr, const char* szAnnotations, SCGParam* vpp, int nComp, CShader* ef)
 {
 	if (szScr)
 	{
@@ -92,11 +92,6 @@ static void sParseRuntimeShaderFlag(const char* szScr, const char* szAnnotations
 #define PARAM(a, b) # a, b
 static SParamDB sParams[] =
 {
-	SParamDB(PARAM(SI_AmbientOpacity,                        ECGP_SI_AmbientOpacity),                        0),
-
-	SParamDB(PARAM(PB_AmbientOpacity,                        ECGP_PB_AmbientOpacity),                        0),
-
-
 	SParamDB(PARAM(PM_MatChannelSB,                          ECGP_PM_MatChannelSB),                          0),
 	SParamDB(PARAM(PM_MatDiffuseColor,                       ECGP_PM_MatDiffuseColor),                       0),
 	SParamDB(PARAM(PM_MatSpecularColor,                      ECGP_PM_MatSpecularColor),                      0),
@@ -106,19 +101,14 @@ static SParamDB sParams[] =
 	SParamDB(PARAM(PM_MatDetailTilingAndAlphaRef,            ECGP_PM_MatDetailTilingAndAlphaRef),            0),
 	SParamDB(PARAM(PM_MatSilPomDetailParams,                 ECGP_PM_MatSilPomDetailParams),                 0),
 
-	SParamDB(PARAM(PI_Ambient,                               ECGP_PI_Ambient),                               0),
-
 	SParamDB(PARAM(PB_HDRParams,                             ECGP_PB_HDRParams),                             0),
 	SParamDB(PARAM(PB_StereoParams,                          ECGP_PB_StereoParams),                          0),
 
-	SParamDB(PARAM(PI_VisionParams,                          ECGP_PI_VisionParams),                          0),
 	SParamDB(PARAM(PB_VisionMtlParams,                       ECGP_PB_VisionMtlParams),                       0),
 	SParamDB(PARAM(PI_EffectLayerParams,                     ECGP_PI_EffectLayerParams),                     0),
 
 	SParamDB(PARAM(PB_IrregKernel,                           ECGP_PB_IrregKernel),                           0),
 	SParamDB(PARAM(PB_RegularKernel,                         ECGP_PB_RegularKernel),                         0),
-
-	SParamDB(PARAM(PI_MaterialLayersParams,                  ECGP_PI_MaterialLayersParams),                  0),
 
 	SParamDB(PARAM(PB_VolumetricFogParams,                   ECGP_PB_VolumetricFogParams),                   0),
 	SParamDB(PARAM(PB_VolumetricFogRampParams,               ECGP_PB_VolumetricFogRampParams),               0),
@@ -138,7 +128,6 @@ static SParamDB sParams[] =
 	SParamDB(PARAM(PB_VolumetricFogDistanceParams,           ECGP_PB_VolumetricFogDistanceParams),           0),
 	SParamDB(PARAM(PB_VolumetricFogGlobalEnvProbe0,          ECGP_PB_VolumetricFogGlobalEnvProbe0),          0),
 	SParamDB(PARAM(PB_VolumetricFogGlobalEnvProbe1,          ECGP_PB_VolumetricFogGlobalEnvProbe1),          0),
-	SParamDB(PARAM(PI_AvgFogVolumeContrib,                   ECGP_PI_AvgFogVolumeContrib),                   0),
 	SParamDB(PARAM(PI_NumInstructions,                       ECGP_PI_NumInstructions),                       PD_INDEXED),
 
 	SParamDB(PARAM(PB_FromRE,                                ECGP_PB_FromRE),                                PD_INDEXED | 0),
@@ -308,7 +297,7 @@ bool CShaderMan::mfParseParamComp(int comp, SCGParam* pCurParam, const char* szS
 				}
 			}
 			if (sParams[n].ParserFunc)
-				sParams[n].ParserFunc(params ? params : szSemantic, szAnnotations, &FXParams.m_FXSamplersOld, pCurParam, comp, ef);
+				sParams[n].ParserFunc(params ? params : szSemantic, szAnnotations, pCurParam, comp, ef);
 			break;
 		}
 		n++;

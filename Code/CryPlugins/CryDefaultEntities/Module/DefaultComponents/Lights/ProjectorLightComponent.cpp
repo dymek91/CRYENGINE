@@ -98,7 +98,7 @@ void CProjectorLightComponent::Initialize()
 	}
 	else
 	{
-		light.m_pLightImage = gEnv->pRenderer->EF_LoadTexture(szProjectorTexturePath, FT_DONT_STREAM);
+		light.m_pLightImage = gEnv->pRenderer->EF_LoadTexture(szProjectorTexturePath, 0);
 	}
 
 	if ((light.m_pLightImage == nullptr || !light.m_pLightImage->IsTextureLoaded()) && light.m_pLightDynTexSource == nullptr)
@@ -144,8 +144,34 @@ void CProjectorLightComponent::Initialize()
 		}
 	}
 
+	if (m_optics.m_flareEnable && !m_optics.m_lensFlareName.empty())
+	{
+		int32 opticsIndex = 0;
+		if (gEnv->pOpticsManager->Load(m_optics.m_lensFlareName.c_str(), opticsIndex))
+		{
+			IOpticsElementBase* pOpticsElement = gEnv->pOpticsManager->GetOptics(opticsIndex);
+			light.SetLensOpticsElement(pOpticsElement);
+
+			const int32 modularAngle = m_optics.m_flareFOV % 360;
+			if (modularAngle == 0)
+				light.m_LensOpticsFrustumAngle = 255;
+			else
+				light.m_LensOpticsFrustumAngle = (uint8)(m_optics.m_flareFOV * (255.0f / 360.0f));
+
+			if (m_optics.m_attachToSun)
+			{
+				light.m_Flags |= DLF_ATTACH_TO_SUN | DLF_FAKE | DLF_IGNORES_VISAREAS;
+				light.m_Flags &= ~DLF_THIS_AREA_ONLY;
+			}
+		}
+	}
+
+	m_pEntity->UpdateLightClipBounds(light);
+
 	// Load the light source into the entity
 	m_pEntity->LoadLight(GetOrMakeEntitySlotId(), &light);
+
+	bool needsDefaultLensFlareMaterial = m_optics.m_flareEnable;
 
 	if (m_projectorOptions.HasMaterialPath())
 	{
@@ -153,7 +179,16 @@ void CProjectorLightComponent::Initialize()
 		if (IMaterial* pMaterial = gEnv->p3DEngine->GetMaterialManager()->LoadMaterial(m_projectorOptions.GetMaterialPath(), false))
 		{
 			m_pEntity->SetSlotMaterial(GetEntitySlotId(), pMaterial);
+			needsDefaultLensFlareMaterial = false;
 		}
+	}
+
+	// Set the default lens flare material in case the user hasn't specified one.
+	if(needsDefaultLensFlareMaterial)
+	{
+		IMaterial* pMaterial = gEnv->p3DEngine->GetMaterialManager()->LoadMaterial(g_szDefaultLensFlareMaterialName);
+		if (pMaterial)
+			m_pEntity->SetSlotMaterial(GetEntitySlotId(), pMaterial);
 	}
 
 	CryTransform::CTransformPtr pTransform = m_pTransform;
@@ -175,7 +210,7 @@ void CProjectorLightComponent::Initialize()
 
 void CProjectorLightComponent::ProcessEvent(const SEntityEvent& event)
 {
-	if (event.event == ENTITY_EVENT_COMPONENT_PROPERTY_CHANGED)
+	if (event.event == ENTITY_EVENT_COMPONENT_PROPERTY_CHANGED || ENTITY_EVENT_BIT(ENTITY_EVENT_LINK) || ENTITY_EVENT_BIT(ENTITY_EVENT_DELINK))
 	{
 		Initialize();
 	}
@@ -183,7 +218,7 @@ void CProjectorLightComponent::ProcessEvent(const SEntityEvent& event)
 
 uint64 CProjectorLightComponent::GetEventMask() const
 {
-	return ENTITY_EVENT_BIT(ENTITY_EVENT_COMPONENT_PROPERTY_CHANGED);
+	return ENTITY_EVENT_BIT(ENTITY_EVENT_COMPONENT_PROPERTY_CHANGED) | ENTITY_EVENT_BIT(ENTITY_EVENT_LINK) | ENTITY_EVENT_BIT(ENTITY_EVENT_DELINK);
 }
 
 #ifndef RELEASE

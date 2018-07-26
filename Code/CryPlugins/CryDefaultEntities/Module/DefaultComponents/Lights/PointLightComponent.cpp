@@ -65,11 +65,12 @@ namespace Cry
 			{
 				light.m_Flags |= DLF_CASTSHADOW_MAPS;
 
-				light.SetShadowBiasParams(1.f, 1.f);
-				light.m_fShadowUpdateMinRadius = light.m_fRadius;
+				light.SetShadowBiasParams(m_shadows.m_shadowBias, m_shadows.m_shadowSlopeBias);
+				light.m_fShadowUpdateMinRadius = m_shadows.m_shadowUpdateMinRadius;
+				light.m_fShadowResolutionScale = m_shadows.m_shadowResolutionScale;
+				light.m_nShadowMinResolution = m_shadows.m_shadowMinResolution;
 
-				float shadowUpdateRatio = 1.f;
-				light.m_nShadowUpdateRatio = max((uint16)1, (uint16)(shadowUpdateRatio * (1 << DL_SHADOW_UPDATE_SHIFT)));
+				light.m_nShadowUpdateRatio = max((uint16)1, (uint16)(m_shadows.m_shadowUpdateRatio * (1 << DL_SHADOW_UPDATE_SHIFT)));
 			}
 			else
 				light.m_Flags &= ~DLF_CASTSHADOW_MAPS;
@@ -77,6 +78,30 @@ namespace Cry
 			light.SetRadius(m_radius, m_options.m_attenuationBulbSize);
 
 			light.m_fFogRadialLobe = m_options.m_fogRadialLobe;
+
+			m_pEntity->UpdateLightClipBounds(light);
+
+			if (!m_optics.m_lensFlareName.empty() && m_optics.m_flareEnable)
+			{
+				int32 opticsIndex = 0;
+				if (gEnv->pOpticsManager->Load(m_optics.m_lensFlareName.c_str(), opticsIndex))
+				{
+					IOpticsElementBase* pOpticsElement = gEnv->pOpticsManager->GetOptics(opticsIndex);
+					light.SetLensOpticsElement(pOpticsElement);
+
+					const int32 modularAngle = m_optics.m_flareFOV % 360;
+					if (modularAngle == 0)
+						light.m_LensOpticsFrustumAngle = 255;
+					else
+						light.m_LensOpticsFrustumAngle = (uint8)(m_optics.m_flareFOV * (255.0f / 360.0f));
+
+					if (m_optics.m_attachToSun)
+					{
+						light.m_Flags |= DLF_ATTACH_TO_SUN | DLF_FAKE | DLF_IGNORES_VISAREAS;
+						light.m_Flags &= ~DLF_THIS_AREA_ONLY;
+					}
+				}
+			}
 
 			// Load the light source into the entity
 			const int slot = m_pEntity->LoadLight(GetOrMakeEntitySlotId(), &light);
@@ -91,11 +116,14 @@ namespace Cry
 				pRenderNode->SetViewDistRatio(viewDistance);
 			}
 
+			IMaterial* pMaterial = gEnv->p3DEngine->GetMaterialManager()->LoadMaterial(g_szDefaultLensFlareMaterialName);
+			if(pMaterial && m_optics.m_flareEnable)
+				m_pEntity->SetSlotMaterial(slot, pMaterial);
 		}
 
 		void CPointLightComponent::ProcessEvent(const SEntityEvent& event)
 		{
-			if (event.event == ENTITY_EVENT_COMPONENT_PROPERTY_CHANGED)
+			if (event.event == ENTITY_EVENT_COMPONENT_PROPERTY_CHANGED || event.event == ENTITY_EVENT_LINK || event.event == ENTITY_EVENT_DELINK)
 			{
 				Initialize();
 			}
@@ -103,7 +131,7 @@ namespace Cry
 
 		uint64 CPointLightComponent::GetEventMask() const
 		{
-			return ENTITY_EVENT_BIT(ENTITY_EVENT_COMPONENT_PROPERTY_CHANGED);
+			return ENTITY_EVENT_BIT(ENTITY_EVENT_COMPONENT_PROPERTY_CHANGED) | ENTITY_EVENT_BIT(ENTITY_EVENT_LINK) | ENTITY_EVENT_BIT(ENTITY_EVENT_DELINK);
 		}
 
 #ifndef RELEASE

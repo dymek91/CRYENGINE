@@ -618,7 +618,7 @@ bool CHudSilhouettes::Preprocess(const SRenderViewInfo& viewInfo)
 		CRenderView *pRenderView = gcpRendD3D->GetGraphicsPipeline().GetCurrentRenderView();
 		// no need to proceed
 		float fType = m_pType->GetParam();
-		uint32 nBatchMask = pRenderView->GetBatchFlags(EFSLIST_GENERAL) | pRenderView->GetBatchFlags(EFSLIST_TRANSP);
+		uint32 nBatchMask = pRenderView->GetBatchFlags(EFSLIST_GENERAL) | pRenderView->GetBatchFlags(EFSLIST_TRANSP_BW) | pRenderView->GetBatchFlags(EFSLIST_TRANSP_AW);
 
 		if ((!(nBatchMask & FB_CUSTOM_RENDER)) && fType == 1.0f)
 		{
@@ -816,6 +816,20 @@ bool CScreenBlood::Preprocess(const SRenderViewInfo& viewInfo)
 	return (CRenderer::CV_r_PostProcessGameFx && m_pAmount->GetParam() > 0.005f);
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void CScreenFader::Reset(bool bOnSpecChange)
+{
+	m_pColor->ResetParamVec4(Vec4(0.0f, 0.0f, 0.0f, 0.0f));
+}
+
+bool CScreenFader::Preprocess(const SRenderViewInfo& viewInfo)
+{
+	return (CRenderer::CV_r_PostProcessGameFx && m_pColor->GetParamVec4().w > 0.001f);
+}
+
+//////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
 
 bool CPost3DRenderer::Preprocess(const SRenderViewInfo& viewInfo)
@@ -850,7 +864,8 @@ bool CPost3DRenderer::HasModelsToRender() const
 	const uint32 batchMask = pRenderView->GetBatchFlags(EFSLIST_GENERAL)
 		| pRenderView->GetBatchFlags(EFSLIST_SKIN)
 		| pRenderView->GetBatchFlags(EFSLIST_DECAL)
-		| pRenderView->GetBatchFlags(EFSLIST_TRANSP);
+		| pRenderView->GetBatchFlags(EFSLIST_TRANSP_BW)
+		| pRenderView->GetBatchFlags(EFSLIST_TRANSP_AW);
 	return (batchMask & FB_POST_3D_RENDER) ? true : false;
 }
 

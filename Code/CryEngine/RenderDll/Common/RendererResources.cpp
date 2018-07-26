@@ -183,7 +183,6 @@ CTexture* CRendererResources::s_ptexSceneSpecularESRAM;
 // Post-process related textures
 CTexture* CRendererResources::s_ptexBackBuffer = NULL;
 CTexture* CRendererResources::s_ptexModelHudBuffer;
-CTexture* CRendererResources::s_ptexPrevBackBuffer[2][2] = { { NULL } };
 CTexture* CRendererResources::s_ptexCached3DHud;
 CTexture* CRendererResources::s_ptexCached3DHudScaled;
 CTexture* CRendererResources::s_ptexBackBufferScaled[3];
@@ -230,9 +229,6 @@ CTexture* CRendererResources::s_ptexCurLumTexture;
 CTexture* CRendererResources::s_ptexHDRToneMaps[NUM_HDR_TONEMAP_TEXTURES];
 CTexture* CRendererResources::s_ptexHDRMeasuredLuminance[MAX_GPU_NUM];
 CTexture* CRendererResources::s_ptexHDRMeasuredLuminanceDummy;
-CTexture* CRendererResources::s_ptexSkyDomeMie;
-CTexture* CRendererResources::s_ptexSkyDomeRayleigh;
-CTexture* CRendererResources::s_ptexSkyDomeMoon;
 CTexture* CRendererResources::s_ptexColorChart;
 
 CTexture* CRendererResources::s_ptexFlaresOcclusionRing[MAX_OCCLUSION_READBACK_TEXTURES] = { NULL };
@@ -333,9 +329,6 @@ void CRendererResources::UnloadDefaultSystemTextures(bool bFinalRelease)
 
 	SAFE_RELEASE_FORCE(s_ptexMipColors_Diffuse);
 	SAFE_RELEASE_FORCE(s_ptexMipColors_Bump);
-	SAFE_RELEASE_FORCE(s_ptexSkyDomeMie);
-	SAFE_RELEASE_FORCE(s_ptexSkyDomeRayleigh);
-	SAFE_RELEASE_FORCE(s_ptexSkyDomeMoon);
 	SAFE_RELEASE_FORCE(s_ptexRT_ShadowPool);
 	SAFE_RELEASE_FORCE(s_ptexFarPlane);
 
@@ -365,9 +358,9 @@ void CRendererResources::LoadDefaultSystemTextures()
 	{
 		m_bLoadedSystem = true;
 
-		const float clearDepth = CRenderer::CV_r_ReverseDepth ? 0.f : 1.f;
-		const uint clearStencil = 1;
-		const ColorF clearValues = ColorF(clearDepth, FLOAT(clearStencil), 0.f, 0.f);
+		const float  clearDepth   = Clr_FarPlane_Rev.r;
+		const uint8  clearStencil = Val_Stencil;
+		const ColorF clearValues  = ColorF(clearDepth, FLOAT(clearStencil), 0.f, 0.f);
 
 		// Textures loaded directly from file
 		struct
@@ -452,7 +445,7 @@ void CRendererResources::LoadDefaultSystemTextures()
 
 		s_ptexRT_2D = CTexture::GetOrCreateTextureObject("$RT_2D", 0, 0, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET, eTF_Unknown, TO_RT_2D);
 
-		s_ptexRainOcclusion = CTexture::GetOrCreateTextureObject("$RainOcclusion", 0, 0, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET, eTF_Unknown);
+		s_ptexRainOcclusion = CTexture::GetOrCreateTextureObject("$RainOcclusion", RAIN_OCC_MAP_SIZE, RAIN_OCC_MAP_SIZE, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET, eTF_R8G8B8A8);
 		s_ptexRainSSOcclusion[0] = CTexture::GetOrCreateTextureObject("$RainSSOcclusion0", 0, 0, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET, eTF_Unknown);
 		s_ptexRainSSOcclusion[1] = CTexture::GetOrCreateTextureObject("$RainSSOcclusion1", 0, 0, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET, eTF_Unknown);
 
@@ -492,9 +485,9 @@ void CRendererResources::LoadDefaultSystemTextures()
 			s_ptexVelocityTiles[0] = CTexture::GetOrCreateTextureObject("$VelocityTilesTmp0", 0, 0, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET, eTF_Unknown, -1);
 			s_ptexVelocityTiles[1] = CTexture::GetOrCreateTextureObject("$VelocityTilesTmp1", 0, 0, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET, eTF_Unknown, -1);
 			s_ptexVelocityTiles[2] = CTexture::GetOrCreateTextureObject("$VelocityTiles", 0, 0, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET, eTF_Unknown, -1);
-			s_ptexVelocityObjects[0] = CTexture::GetOrCreateTextureObject("$VelocityObjects", 0, 0, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET, eTF_Unknown, -1);
+			s_ptexVelocityObjects[0] = CTexture::GetOrCreateTextureObject("$VelocityObjects", 0, 0, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET | FT_USAGE_UNORDERED_ACCESS, eTF_Unknown, -1);
 			// Only used for VR, but we need to support runtime switching
-			s_ptexVelocityObjects[1] = CTexture::GetOrCreateTextureObject("$VelocityObjects_R", 0, 0, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET, eTF_Unknown, -1);
+			s_ptexVelocityObjects[1] = CTexture::GetOrCreateTextureObject("$VelocityObjects_R", 0, 0, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET | FT_USAGE_UNORDERED_ACCESS, eTF_Unknown, -1);
 
 			s_ptexBackBuffer = CTexture::GetOrCreateTextureObject("$BackBuffer", 0, 0, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET, eTF_Unknown, TO_BACKBUFFERMAP);
 
@@ -527,7 +520,7 @@ void CRendererResources::LoadDefaultSystemTextures()
 
 			// fixme: get texture resolution from CREWaterOcean
 			// TODO: make s_ptexWaterVolumeTemp an array texture
-			s_ptexWaterOcean = CTexture::GetOrCreateTextureObject("$WaterOceanMap", 64, 64, 1, eTT_2D, FT_DONT_RELEASE | FT_NOMIPS | FT_STAGE_UPLOAD | FT_DONT_STREAM, eTF_Unknown, TO_WATEROCEANMAP);
+			s_ptexWaterOcean = CTexture::GetOrCreateTextureObject("$WaterOceanMap", 64, 64, 1, eTT_2D, FT_DONT_RELEASE | FT_NOMIPS | FT_DONT_STREAM, eTF_Unknown, TO_WATEROCEANMAP);
 			s_ptexWaterVolumeTemp[0] = CTexture::GetOrCreateTextureObject("$WaterVolumeTemp_0", 64, 64, 1, eTT_2D, /*FT_DONT_RELEASE |*/ FT_NOMIPS | FT_DONT_STREAM, eTF_Unknown);
 			s_ptexWaterVolumeTemp[1] = CTexture::GetOrCreateTextureObject("$WaterVolumeTemp_1", 64, 64, 1, eTT_2D, /*FT_DONT_RELEASE |*/ FT_NOMIPS | FT_DONT_STREAM, eTF_Unknown);
 			s_ptexWaterVolumeDDN = CTexture::GetOrCreateTextureObject("$WaterVolumeDDN", 64, 64, 1, eTT_2D, /*FT_DONT_RELEASE |*/ FT_DONT_STREAM | FT_USAGE_RENDERTARGET | FT_FORCE_MIPS, eTF_Unknown, TO_WATERVOLUMEMAP);
@@ -574,10 +567,6 @@ void CRendererResources::LoadDefaultSystemTextures()
 		}
 
 		s_ptexColorChart = CTexture::GetOrCreateTextureObject("$ColorChart", 0, 0, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET, eTF_Unknown, TO_COLORCHART);
-
-		s_ptexSkyDomeMie = CTexture::GetOrCreateTextureObject("$SkyDomeMie", 0, 0, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET, eTF_Unknown, TO_SKYDOME_MIE);
-		s_ptexSkyDomeRayleigh = CTexture::GetOrCreateTextureObject("$SkyDomeRayleigh", 0, 0, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET, eTF_Unknown, TO_SKYDOME_RAYLEIGH);
-		s_ptexSkyDomeMoon = CTexture::GetOrCreateTextureObject("$SkyDomeMoon", 0, 0, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET, eTF_Unknown, TO_SKYDOME_MOON);
 
 		for (i = 0; i < EFTT_MAX; i++)
 		{
@@ -743,18 +732,17 @@ void CRendererResources::DestroySystemTargets()
 
 void CRendererResources::CreateDepthMaps(int resourceWidth, int resourceHeight)
 {
-	const float clearDepth = CRenderer::CV_r_ReverseDepth ? 0.f : 1.f;
-	const uint clearStencil = 1;
-	const ColorF clearValues = ColorF(clearDepth, FLOAT(clearStencil), 0.f, 0.f);
-
-	ETEX_Format preferredDepthFormat =
+	const ETEX_Format preferredDepthFormat =
 		gRenDev->GetDepthBpp() == 32 ? eTF_D32FS8 :
-		gRenDev->GetDepthBpp() == 24 ? eTF_D24S8 :
-		gRenDev->GetDepthBpp() ==  8 ? eTF_D16S8 : eTF_D16;
-	ETEX_Format eTFZ = s_eTFZ;
+		gRenDev->GetDepthBpp() == 24 ? eTF_D24S8  :
+		gRenDev->GetDepthBpp() ==  8 ? eTF_D16S8  : eTF_D16;
+	const ETEX_Format eTFZ = s_eTFZ =
+		preferredDepthFormat == eTF_D32FS8 ? eTF_R32F :
+		preferredDepthFormat == eTF_D24S8  ? eTF_R32F :
+		preferredDepthFormat == eTF_D16S8  ? eTF_R16  : eTF_R16;
 
-	uint32 nDSFlags = FT_DONT_STREAM | FT_DONT_RELEASE | FT_USAGE_DEPTHSTENCIL;
-	uint32 nRTFlags = FT_DONT_STREAM | FT_DONT_RELEASE | FT_USAGE_RENDERTARGET;
+	const uint32 nDSFlags = FT_DONT_STREAM | FT_DONT_RELEASE | FT_USAGE_DEPTHSTENCIL;
+	const uint32 nRTFlags = FT_DONT_STREAM | FT_DONT_RELEASE | FT_USAGE_RENDERTARGET;
 	
 	s_ptexLinearDepth->SetFlags(nRTFlags);
 	s_ptexLinearDepth->SetWidth(resourceWidth);
@@ -881,19 +869,19 @@ void CRendererResources::CreateDeferredMaps(int resourceWidth, int resourceHeigh
 		SD3DPostEffectsUtils::GetOrCreateRenderTarget("$SceneSpecularESRAM", s_ptexSceneSpecularESRAM, width, height, Clr_Empty, true, false, eTF_R8G8B8A8, -1);
 #endif
 
-		SD3DPostEffectsUtils::GetOrCreateRenderTarget("$VelocityObjects", s_ptexVelocityObjects[0], width, height, Clr_Transparent, true, false, eTF_R16G16F, -1);
+		SD3DPostEffectsUtils::GetOrCreateRenderTarget("$VelocityObjects", s_ptexVelocityObjects[0], width, height, Clr_Transparent, true, false, eTF_R16G16F, -1, FT_USAGE_UNORDERED_ACCESS);
 		if (gRenDev->IsStereoEnabled())
 		{
-			SD3DPostEffectsUtils::GetOrCreateRenderTarget("$VelocityObject_R", s_ptexVelocityObjects[1], width, height, Clr_Transparent, true, false, eTF_R16G16F, -1);
+			SD3DPostEffectsUtils::GetOrCreateRenderTarget("$VelocityObject_R", s_ptexVelocityObjects[1], width, height, Clr_Transparent, true, false, eTF_R16G16F, -1, FT_USAGE_UNORDERED_ACCESS);
 		}
 
-		SD3DPostEffectsUtils::GetOrCreateDepthStencil("$SceneDepthScaled", s_ptexSceneDepthScaled[0], width_r2, height_r2, Clr_FarPlane, false, false, preferredDepthFormat, -1, FT_USAGE_DEPTHSTENCIL);
-		SD3DPostEffectsUtils::GetOrCreateDepthStencil("$SceneDepthScaled2", s_ptexSceneDepthScaled[1], width_r4, height_r4, Clr_FarPlane, false, false, preferredDepthFormat, -1, FT_USAGE_DEPTHSTENCIL);
-		SD3DPostEffectsUtils::GetOrCreateDepthStencil("$SceneDepthScaled3", s_ptexSceneDepthScaled[2], width_r8, height_r8, Clr_FarPlane, false, false, preferredDepthFormat, -1, FT_USAGE_DEPTHSTENCIL);
+		SD3DPostEffectsUtils::GetOrCreateDepthStencil("$SceneDepthScaled" , s_ptexSceneDepthScaled[0], width_r2, height_r2, Clr_FarPlane_Rev, false, false, preferredDepthFormat, -1, FT_USAGE_DEPTHSTENCIL);
+		SD3DPostEffectsUtils::GetOrCreateDepthStencil("$SceneDepthScaled2", s_ptexSceneDepthScaled[1], width_r4, height_r4, Clr_FarPlane_Rev, false, false, preferredDepthFormat, -1, FT_USAGE_DEPTHSTENCIL);
+		SD3DPostEffectsUtils::GetOrCreateDepthStencil("$SceneDepthScaled3", s_ptexSceneDepthScaled[2], width_r8, height_r8, Clr_FarPlane_Rev, false, false, preferredDepthFormat, -1, FT_USAGE_DEPTHSTENCIL);
 
-		SD3DPostEffectsUtils::GetOrCreateRenderTarget("$ZTargetScaled", s_ptexLinearDepthScaled[0], width_r2, height_r2, Clr_FarPlane, 1, 0, fmtZScaled, TO_DOWNSCALED_ZTARGET_FOR_AO);
-		SD3DPostEffectsUtils::GetOrCreateRenderTarget("$ZTargetScaled2", s_ptexLinearDepthScaled[1], width_r4, height_r4, Clr_FarPlane, 1, 0, fmtZScaled, TO_QUARTER_ZTARGET_FOR_AO);
-		SD3DPostEffectsUtils::GetOrCreateRenderTarget("$ZTargetScaled3", s_ptexLinearDepthScaled[2], width_r8, height_r8, Clr_FarPlane, 1, 0, fmtZScaled);
+		SD3DPostEffectsUtils::GetOrCreateRenderTarget("$ZTargetScaled" , s_ptexLinearDepthScaled[0], width_r2, height_r2, ColorF(1.0f, 1.0f, 1.0f, 1.0f), 1, 0, fmtZScaled, TO_DOWNSCALED_ZTARGET_FOR_AO);
+		SD3DPostEffectsUtils::GetOrCreateRenderTarget("$ZTargetScaled2", s_ptexLinearDepthScaled[1], width_r4, height_r4, ColorF(1.0f, 1.0f, 1.0f, 1.0f), 1, 0, fmtZScaled, TO_QUARTER_ZTARGET_FOR_AO);
+		SD3DPostEffectsUtils::GetOrCreateRenderTarget("$ZTargetScaled3", s_ptexLinearDepthScaled[2], width_r8, height_r8, ColorF(1.0f, 1.0f, 1.0f, 1.0f), 1, 0, fmtZScaled);
 	}
 
 	// Pre-create shadow pool
@@ -908,7 +896,7 @@ void CRendererResources::CreateDeferredMaps(int resourceWidth, int resourceHeigh
 		s_ptexRT_ShadowPool->Invalidate(gcpRendD3D->m_nShadowPoolWidth, gcpRendD3D->m_nShadowPoolHeight, eShadTF);
 		if (!CTexture::IsTextureExist(s_ptexRT_ShadowPool))
 		{
-			s_ptexRT_ShadowPool->CreateDepthStencil(eTF_Unknown, Clr_FarPlane);
+			s_ptexRT_ShadowPool->CreateDepthStencil(eTF_Unknown, ColorF(1.0f, 5, 0.f, 0.f));
 		}
 	}
 
@@ -1029,7 +1017,7 @@ void CRendererResources::CreateHDRMaps(int resourceWidth, int resourceHeight)
 	for (i = 0; i < 8; i++)
 	{
 		sprintf(szName, "$HDRAdaptedLuminanceCur_%d", i);
-		pHDRPostProcess->AddRenderTarget(1, 1, Clr_Unknown, eTF_R16G16F, 0.1f, szName, &s_ptexHDRAdaptedLuminanceCur[i], FT_DONT_RELEASE);
+		pHDRPostProcess->AddRenderTarget(1, 1, Clr_White, eTF_R16G16F, 0.1f, szName, &s_ptexHDRAdaptedLuminanceCur[i], FT_DONT_RELEASE);
 	}
 
 	pHDRPostProcess->AddRenderTarget(width, height, Clr_Unknown, eTF_R11G11B10F, 1.0f, "$SceneTargetR11G11B10F_0", &s_ptexSceneTargetR11G11B10F[0], nHDRTargetFlagsUAV);
@@ -1131,7 +1119,6 @@ void CRendererResources::DestroyHDRMaps()
 
 bool CRendererResources::CreatePostFXMaps(int resourceWidth, int resourceHeight)
 {
-	const bool bCreatePostAA = CRenderer::CV_r_AntialiasingMode && (!CTexture::IsTextureExist(s_ptexPrevBackBuffer[0][0])) || (gRenDev->IsStereoEnabled() && !s_ptexPrevBackBuffer[0][1]);
 	const bool bCreateCaustics = (CRenderer::CV_r_watervolumecaustics && CRenderer::CV_r_watercaustics && CRenderer::CV_r_watercausticsdeferred) && !CTexture::IsTextureExist(s_ptexWaterCaustics[0]);
 
 	const int width = resourceWidth, width_r2 = (width + 1) / 2, width_r4 = (width_r2 + 1) / 2, width_r8 = (width_r4 + 1) / 2;
@@ -1139,27 +1126,10 @@ bool CRendererResources::CreatePostFXMaps(int resourceWidth, int resourceHeight)
 
 	if (!s_ptexBackBufferScaled[0] ||
 		s_ptexBackBufferScaled[0]->GetWidth() != width_r2 ||
-		s_ptexBackBufferScaled[0]->GetHeight() != height_r2 || bCreatePostAA || bCreateCaustics)
+		s_ptexBackBufferScaled[0]->GetHeight() != height_r2 || 
+		bCreateCaustics)
 	{
 		assert(gRenDev);
-
-		if (CRenderer::CV_r_AntialiasingMode)
-		{
-			SPostEffectsUtils::GetOrCreateRenderTarget("$PrevBackBuffer0", s_ptexPrevBackBuffer[0][0], width, height, Clr_Unknown, 1, 0, eTF_R16G16B16A16, TO_PREVBACKBUFFERMAP0, FT_DONT_RELEASE);
-			SPostEffectsUtils::GetOrCreateRenderTarget("$PrevBackBuffer1", s_ptexPrevBackBuffer[1][0], width, height, Clr_Unknown, 1, 0, eTF_R16G16B16A16, TO_PREVBACKBUFFERMAP1, FT_DONT_RELEASE);
-			if (gRenDev->IsStereoEnabled())
-			{
-				SPostEffectsUtils::GetOrCreateRenderTarget("$PrevBackBuffer0_R", s_ptexPrevBackBuffer[0][1], width, height, Clr_Unknown, 1, 0, eTF_R16G16B16A16, -1, FT_DONT_RELEASE);
-				SPostEffectsUtils::GetOrCreateRenderTarget("$PrevBackBuffer1_R", s_ptexPrevBackBuffer[1][1], width, height, Clr_Unknown, 1, 0, eTF_R16G16B16A16, -1, FT_DONT_RELEASE);
-			}
-		}
-		else
-		{
-			SAFE_RELEASE_FORCE(s_ptexPrevBackBuffer[0][0]);
-			SAFE_RELEASE_FORCE(s_ptexPrevBackBuffer[1][0]);
-			SAFE_RELEASE_FORCE(s_ptexPrevBackBuffer[0][1]);
-			SAFE_RELEASE_FORCE(s_ptexPrevBackBuffer[1][1]);
-		}
 
 		SPostEffectsUtils::GetOrCreateRenderTarget("$Cached3DHud", s_ptexCached3DHud, width, height, Clr_Unknown, 1, 0, eTF_R8G8B8A8, -1, FT_DONT_RELEASE);
 		SPostEffectsUtils::GetOrCreateRenderTarget("$Cached3DHudDownsampled", s_ptexCached3DHudScaled, width_r4, height_r4, Clr_Unknown, 1, 0, eTF_R8G8B8A8, -1, FT_DONT_RELEASE);
@@ -1205,7 +1175,7 @@ bool CRendererResources::CreatePostFXMaps(int resourceWidth, int resourceHeight)
 
 		// TODO: Only create necessary RTs for minimal ring?
 		char str[256];
-		for (int i = 0; i < MAX_OCCLUSION_READBACK_TEXTURES; i++)
+		for (int i = 0, end = gcpRendD3D->GetActiveGPUCount() * MAX_FRAMES_IN_FLIGHT; i < end; i++)
 		{
 			sprintf(str, "$FlaresOcclusion_%d", i);
 			SPostEffectsUtils::GetOrCreateRenderTarget(str, s_ptexFlaresOcclusionRing[i], CFlareSoftOcclusionQuery::s_nIDColMax, CFlareSoftOcclusionQuery::s_nIDRowMax, Clr_Unknown, 1, 0, eTF_R8G8B8A8, -1, FT_DONT_RELEASE | FT_STAGE_READBACK);
@@ -1219,7 +1189,7 @@ bool CRendererResources::CreatePostFXMaps(int resourceWidth, int resourceHeight)
 	 */
 
 	if (!CTexture::IsTextureExist(s_ptexRainOcclusion))
-		SPostEffectsUtils::GetOrCreateRenderTarget("$RainOcclusion", s_ptexRainOcclusion, RAIN_OCC_MAP_SIZE, RAIN_OCC_MAP_SIZE, Clr_Unknown, false, false, eTF_R8G8B8A8, -1, FT_DONT_RELEASE);
+		SPostEffectsUtils::GetOrCreateRenderTarget("$RainOcclusion", s_ptexRainOcclusion, RAIN_OCC_MAP_SIZE, RAIN_OCC_MAP_SIZE, Clr_Neutral, false, false, eTF_R8G8B8A8, -1, FT_DONT_RELEASE);
 
 	if (!CTexture::IsTextureExist(s_ptexWaterVolumeDDN))
 	{
@@ -1233,11 +1203,6 @@ bool CRendererResources::CreatePostFXMaps(int resourceWidth, int resourceHeight)
 
 void CRendererResources::DestroyPostFXMaps()
 {
-	SAFE_RELEASE_FORCE(s_ptexPrevBackBuffer[0][0]);
-	SAFE_RELEASE_FORCE(s_ptexPrevBackBuffer[1][0]);
-	SAFE_RELEASE_FORCE(s_ptexPrevBackBuffer[0][1]);
-	SAFE_RELEASE_FORCE(s_ptexPrevBackBuffer[1][1]);
-
 	SAFE_RELEASE_FORCE(s_ptexBackBufferScaled[0]);
 	SAFE_RELEASE_FORCE(s_ptexBackBufferScaled[1]);
 	SAFE_RELEASE_FORCE(s_ptexBackBufferScaled[2]);
@@ -1332,7 +1297,7 @@ void CRendererResources::CreateCachedShadowMaps()
 		if (!CTexture::IsTextureExist(pTx) && nResolutions[i] > 0 && i < cachedCascadesCount)
 		{
 			CryLog("Allocating shadow map cache %d x %d: %.2f MB", nResolutions[i], nResolutions[i], sqr(nResolutions[i]) * CTexture::BitsPerPixel(texFormat) / (1024.f * 1024.f * 8.f));
-			pTx->CreateDepthStencil(texFormat, Clr_FarPlane);
+			pTx->CreateDepthStencil(texFormat, ColorF(1.0f, 1.0f, 1.0f, 1.0f));
 		}
 	}
 
@@ -1355,8 +1320,8 @@ void CRendererResources::CreateCachedShadowMaps()
 
 		if (!CTexture::IsTextureExist(s_ptexHeightMapAODepth[0]) && nTexRes > 0)
 		{
-			s_ptexHeightMapAODepth[0]->CreateDepthStencil(texFormat, Clr_FarPlane);
-			s_ptexHeightMapAODepth[1]->CreateRenderTarget(texFormatMips, Clr_FarPlane);
+			s_ptexHeightMapAODepth[0]->CreateDepthStencil(texFormat    , ColorF(1.0f, 1.0f, 1.0f, 1.0f));
+			s_ptexHeightMapAODepth[1]->CreateRenderTarget(texFormatMips, ColorF(1.0f, 1.0f, 1.0f, 1.0f));
 		}
 	}
 
@@ -1404,6 +1369,7 @@ void CRendererResources::DestroyNearestShadowMap()
 
 int CRendererResources::s_resourceWidth = 0, CRendererResources::s_resourceHeight = 0;
 int CRendererResources::s_renderWidth   = 0, CRendererResources::s_renderHeight   = 0;
+int CRendererResources::s_renderMinDim  = 0, CRendererResources::s_renderArea     = 0;
 int CRendererResources::s_outputWidth   = 0, CRendererResources::s_outputHeight   = 0;
 int CRendererResources::s_displayWidth  = 0, CRendererResources::s_displayHeight  = 0;
 
@@ -1420,6 +1386,8 @@ void CRendererResources::OnRenderResolutionChanged(int renderWidth, int renderHe
 
 		s_renderWidth  = renderWidth;
 		s_renderHeight = renderHeight;
+		s_renderMinDim = std::min(renderWidth, renderHeight);
+		s_renderArea   = renderWidth * renderHeight;
 	}
 }
 
@@ -1458,10 +1426,6 @@ void CRendererResources::Clear()
 		s_ptexSceneDiffuseTmp,
 		s_ptexSceneSpecularTmp,
 		s_ptexBackBuffer,
-		s_ptexPrevBackBuffer[0][0],
-		s_ptexPrevBackBuffer[1][0],
-		s_ptexPrevBackBuffer[0][1],
-		s_ptexPrevBackBuffer[1][1],
 		s_ptexSceneTarget,
 		s_ptexLinearDepth,
 		s_ptexHDRTarget
@@ -1471,7 +1435,7 @@ void CRendererResources::Clear()
 	{
 		if (CTexture::IsTextureExist(pTex))
 		{
-			CClearSurfacePass::Execute(pTex, Clr_Empty);
+			CClearSurfacePass::Execute(pTex, pTex->GetClearColor());
 		}
 	}
 }
@@ -1489,10 +1453,6 @@ void CRendererResources::ShutDown()
 		s_ptexSceneDiffuseTmp = NULL;
 		s_ptexSceneSpecularTmp = NULL;
 		s_ptexBackBuffer = NULL;
-		s_ptexPrevBackBuffer[0][0] = NULL;
-		s_ptexPrevBackBuffer[1][0] = NULL;
-		s_ptexPrevBackBuffer[0][1] = NULL;
-		s_ptexPrevBackBuffer[1][1] = NULL;
 		s_ptexSceneTarget = NULL;
 		s_ptexLinearDepth = NULL;
 		s_ptexHDRTarget = NULL;
@@ -1511,133 +1471,40 @@ void CRendererResources::ShutDown()
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-// TODO: redundant specialized texture-pool
-// TODO: implement reuse heap for DX11 as it exists for DX12 and Vulkan
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-CRendererResources::tempTexturePool_t CRendererResources::m_TempDepths;
+size_t CRendererResources::m_RTallocs = 0;
+size_t CRendererResources::m_DTallocs = 0;
 
-STempDepthTexture::~STempDepthTexture() 
+CTexture* CRendererResources::CreateDepthTarget(int nWidth, int nHeight, const ColorF& cClear, ETEX_Format eTF)
 {
-	texture.Release(true);
-}
-
-CRendererResources::CTempTexture CRendererResources::GetTempDepthSurface(int currentFrameID, int nWidth, int nHeight, bool bExactMatch)
-{
-#if defined(OGL_DO_NOT_ALLOW_LARGER_RT)
-	bExactMatch = true;
-#endif
-
-	tempTexturePool_t::value_type selectedTex = nullptr;
-	int leastSquares = std::numeric_limits<int>::max();		// For non-exact matching
-
-	// Choose temporary texture
-	for (const auto &tex : m_TempDepths)
-	{
-		if (tex->UseCount() > 1)
-			continue;
-		if (tex->texture.nWidth < nWidth || tex->texture.nHeight < nHeight)
-			continue;
-
-		const auto widthDiff = tex->texture.nWidth - nWidth;
-		const auto heightDiff = tex->texture.nHeight - nHeight;
-		const auto d = sqr(widthDiff) + sqr(heightDiff);
-
-		if (d == 0)
-		{
-			// Exact match
-			selectedTex = tex;
-			break;
-		}
-		else if (leastSquares > d && !bExactMatch) 
-		{
-			// Non-exact match
-			leastSquares = d;
-			selectedTex = tex;
-		}
-	}
-
-	// Allocate new temporary depth surface
-	if (!selectedTex) 
-	{
-		auto depthSurface = CreateDepthSurface(nWidth, nHeight, false);
-		if (depthSurface.pTexture) 
-		{
-			m_TempDepths.allocate(std::move(depthSurface));
-			selectedTex = m_TempDepths.back();
-		}
-	}
-
-	selectedTex->lastAccessFrameID = currentFrameID;
-
-	return selectedTex;
-}
-
-size_t CRendererResources::SizeofTempDepthSurfaces()
-{
-	size_t nSize = 0;
-	for (const auto &tex : m_TempDepths)
-		nSize += tex->texture.pTexture->GetDeviceDataSize();
-
-	return nSize;
-}
-
-void CRendererResources::ReleaseTempDepthSurfaces()
-{
-	m_TempDepths.clear();
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-SDepthTexture CRendererResources::CreateDepthSurface(int nWidth, int nHeight, bool bAA)
-{
-	const ETEX_Format preferredDepthFormat =
+	const ETEX_Format preferredDepthFormat = eTF == eTF_Unknown ?
 		gRenDev->GetDepthBpp() == 32 ? eTF_D32FS8 :
 		gRenDev->GetDepthBpp() == 24 ? eTF_D24S8 :
-		gRenDev->GetDepthBpp() ==  8 ? eTF_D16S8 : eTF_D16;
+		gRenDev->GetDepthBpp() == 8  ? eTF_D16S8 : eTF_D16 : eTF;
 
-	const float  clearDepth = 0.f;
-	const uint   clearStencil = 0;
-	const ColorF clearValues = ColorF(clearDepth, FLOAT(clearStencil), 0.f, 0.f);
-
-	STextureLayout Layout =
-	{
-		nullptr,
-		nWidth, nHeight, 1, 1, 1,
-		preferredDepthFormat, preferredDepthFormat, eTT_2D,
-
-		/* TODO: change FT_... to CDeviceObjectFactory::... */
-		FT_USAGE_DEPTHSTENCIL /* CDeviceObjectFactory::BIND_DEPTH_STENCIL | CDeviceObjectFactory::HEAP_DEFAULT */, false,
-		clearValues
-#if CRY_PLATFORM_DURANGO && DURANGO_USE_ESRAM
-		, SKIP_ESRAM
-#endif
-	};
-
-	SDepthTexture depthSurface;
-	depthSurface.pTexture = nullptr;
-
-	Layout.m_eDstFormat = CTexture::GetClosestFormatSupported(Layout.m_eDstFormat, Layout.m_pPixelFormat);
-	CDeviceTexture* pZTexture = CDeviceTexture::Create(Layout, nullptr);
-	if (pZTexture)
-	{
-		depthSurface.nWidth = nWidth;
-		depthSurface.nHeight = nHeight;
-		depthSurface.nFrameAccess = -1;
-
-		depthSurface.pTexture = new CTexture(FT_USAGE_DEPTHSTENCIL | FT_DONT_STREAM, clearValues, pZTexture);
-		depthSurface.pTarget = depthSurface.pTexture->GetDevTexture()->Get2DTexture();
-		depthSurface.pSurface = depthSurface.pTexture->GetDevTexture()->LookupDSV(EDefaultResourceViews::DepthStencil);
+	char pName[128]; // Create unique names for every allocation, otherwise name-matches would occur in GetOrCreateDepthStencil()
+	cry_sprintf(pName, "$DepthStencil%8x", ++m_DTallocs);
+	auto pTarget = CTexture::GetOrCreateDepthStencil(pName, nWidth, nHeight, cClear, eTT_2D, FT_USAGE_TEMPORARY | FT_NOMIPS, preferredDepthFormat);
 
 #if !defined(RELEASE) && CRY_PLATFORM_WINDOWS
-		depthSurface.pTarget->SetPrivateData(WKPDID_D3DDebugObjectName, strlen("Dynamically requested Depth-Buffer"), "Dynamically requested Depth-Buffer");
+	pTarget->GetDevTexture()->Get2DTexture()->SetPrivateData(WKPDID_D3DDebugObjectName, strlen("Dynamically requested Depth-Target"), "Dynamically requested Depth-Target");
 #endif
 
-		CClearSurfacePass::Execute(depthSurface.pTexture, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, clearDepth, clearStencil);
-	}
+	return pTarget;
+}
 
-	return depthSurface;
+CTexture* CRendererResources::CreateRenderTarget(int nWidth, int nHeight, const ColorF& cClear, ETEX_Format eTF)
+{
+	char pName[128]; // Create unique names for every allocation, otherwise name-matches would occur in GetOrCreateRenderTarget()
+	cry_sprintf(pName, "$RenderTarget%8x", ++m_RTallocs);
+	auto pTarget = CTexture::GetOrCreateRenderTarget(pName, nWidth, nHeight, cClear, eTT_2D, FT_USAGE_TEMPORARY | FT_NOMIPS, eTF);
+
+#if !defined(RELEASE) && CRY_PLATFORM_WINDOWS
+	pTarget->GetDevTexture()->Get2DTexture()->SetPrivateData(WKPDID_D3DDebugObjectName, strlen("Dynamically requested Color-Target"), "Dynamically requested Color-Target");
+#endif
+
+	return pTarget;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

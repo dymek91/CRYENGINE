@@ -62,14 +62,16 @@ inline void d2f(float* dst, double* src)
 //////////////////////////////////////////////////////////////////////
 // Resource conventions
 
-enum EHWShaderClass
+enum EHWShaderClass : uint8
 {
 	eHWSC_Vertex   = 0,
 	eHWSC_Pixel    = 1,
 	eHWSC_Geometry = 2,
-	eHWSC_Compute  = 3,
-	eHWSC_Domain   = 4,
-	eHWSC_Hull     = 5,
+	eHWSC_Domain   = 3,
+	eHWSC_Hull     = 4,
+	eHWSC_NumGfx   = 5,
+
+	eHWSC_Compute  = 5,
 	eHWSC_Num      = 6
 };
 
@@ -78,10 +80,11 @@ enum EShaderStage : uint8
 	EShaderStage_Vertex            = BIT(eHWSC_Vertex),
 	EShaderStage_Pixel             = BIT(eHWSC_Pixel),
 	EShaderStage_Geometry          = BIT(eHWSC_Geometry),
-	EShaderStage_Compute           = BIT(eHWSC_Compute),
 	EShaderStage_Domain            = BIT(eHWSC_Domain),
 	EShaderStage_Hull              = BIT(eHWSC_Hull),
+	EShaderStage_Compute           = BIT(eHWSC_Compute),
 
+	EShaderStage_CountGfx          = eHWSC_NumGfx,
 	EShaderStage_Count             = eHWSC_Num,
 	EShaderStage_None              = 0,
 	EShaderStage_All               = EShaderStage_Vertex | EShaderStage_Pixel | EShaderStage_Geometry | EShaderStage_Domain | EShaderStage_Hull | EShaderStage_Compute,
@@ -89,54 +92,62 @@ enum EShaderStage : uint8
 };
 DEFINE_ENUM_FLAG_OPERATORS(EShaderStage)
 #define SHADERSTAGE_FROM_SHADERCLASS(SHADERCLASS) ::EShaderStage(BIT(SHADERCLASS))
+#define SHADERSTAGE_FROM_SHADERCLASS_CONDITIONAL(SHADERCLASS, SET) ::EShaderStage((SET) << (SHADERCLASS))
 
 enum EConstantBufferShaderSlot
 {
+	// Z/G/S-Buffer, Forward
+	eConstantBufferShaderSlot_PerDraw                   = 0, // EShaderStage_All
+	eConstantBufferShaderSlot_PerMaterial               = 1, // EShaderStage_All
+	eConstantBufferShaderSlot_SkinQuat                  = 2, // EShaderStage_Vertex
+	eConstantBufferShaderSlot_SkinQuatPrev              = 3, // EShaderStage_Vertex
+	eConstantBufferShaderSlot_PerGroup                  = 4, // EShaderStage_Vertex | EShaderStage_Hull
+	eConstantBufferShaderSlot_PerPass                   = 5, // EShaderStage_All
+	eConstantBufferShaderSlot_PerView                   = 6, // EShaderStage_All
+	eConstantBufferShaderSlot_VrProjection              = 7,
+	
 	// Scaleform
-	eConstantBufferShaderSlot_ScaleformMeshAttributes   = 0,
-	eConstantBufferShaderSlot_ScaleformRenderParameters = 0,
+	eConstantBufferShaderSlot_ScaleformMeshAttributes   = 0, // EShaderStage_Vertex
+	eConstantBufferShaderSlot_ScaleformRenderParameters = 0, // EShaderStage_Pixel
 
-	// Z/G-Buffer
-	eConstantBufferShaderSlot_PerBatch          = 0,
-	eConstantBufferShaderSlot_PerInstanceLegacy = 1, // Deprecated
-	eConstantBufferShaderSlot_PerMaterial       = 3,
-	eConstantBufferShaderSlot_PerPass           = 5,
-	eConstantBufferShaderSlot_SkinQuat          = 9,
-	eConstantBufferShaderSlot_SkinQuatPrev      = 10,
-	eConstantBufferShaderSlot_VrProjection      = 11,
-	eConstantBufferShaderSlot_PerInstance       = 12,
-	eConstantBufferShaderSlot_PerView           = 13,
+	// Primitive/Custom/Post
+	eConstantBufferShaderSlot_PerPrimitive              = eConstantBufferShaderSlot_PerDraw,
 
-	eConstantBufferShaderSlot_Count
+	eConstantBufferShaderSlot_Max                       = 7,
+	eConstantBufferShaderSlot_Count                     = 8,
 };
-
-enum { InlineConstantsShaderSlot = eConstantBufferShaderSlot_PerInstance };
 
 enum EResourceLayoutSlot
 {
-	EResourceLayoutSlot_PerInstanceCB      = 0,
-	EResourceLayoutSlot_PerMaterialRS      = 1,
-	EResourceLayoutSlot_PerInstanceExtraRS = 2,
-	EResourceLayoutSlot_PerPassRS          = 3,
-	EResourceLayoutSlot_VrProjectionCB     = 4,
+	EResourceLayoutSlot_PerDrawCB                       = 0, // EShaderStage_Vertex | EShaderStage_Pixel | EShaderStage_Domain
+	EResourceLayoutSlot_PerDrawExtraRS                  = 1,
+	EResourceLayoutSlot_PerMaterialRS                   = 2,
+	EResourceLayoutSlot_PerPassRS                       = 3,
+	EResourceLayoutSlot_VrProjectionCB                  = 4,
 
-	EResourceLayoutSlot_Max                = 7
+	EResourceLayoutSlot_Max                             = 7,
+	EResourceLayoutSlot_Num                             = 8
 };
 
 enum EReservedTextureSlot
 {
-	//Dymek comment
-	//this share texture registers, be careful when adding texture slots.
-	EReservedTextureSlot_SkinExtraWeights       = 14,
-	EReservedTextureSlot_AdjacencyInfo          = 15,
-	EReservedTextureSlot_ComputeSkinVerts       = 16,
-	EReservedTextureSlot_GpuParticleStream      = 14,
-	EReservedTextureSlot_LightvolumeInfos       = 33,
-	EReservedTextureSlot_LightVolumeRanges      = 34,
-	EReservedTextureSlot_ParticlePositionStream = 35,
-	EReservedTextureSlot_ParticleAxesStream     = 36,
-	EReservedTextureSlot_ParticleColorSTStream  = 37,
-	EReservedTextureSlot_TerrainBaseMap         = 29,
+	// Z/G/S-Buffer
+	EReservedTextureSlot_SkinExtraWeights               = 14, // EShaderStage_Vertex (mutually exclusive with ComputeSkinVerts)
+	EReservedTextureSlot_ComputeSkinVerts               = 14, // EShaderStage_Vertex (mutually exclusive with SkinExtraWeights)
+	EReservedTextureSlot_GpuParticleStream              = 14, // EShaderStage_Vertex
+
+	EReservedTextureSlot_DrawInstancingData             = 15, // EShaderStage_Vertex | EShaderStage_Pixel
+	EReservedTextureSlot_AdjacencyInfo                  = 16, // EShaderStage_Domain
+	EReservedTextureSlot_TerrainBaseMap                 = 29, // EShaderStage_Pixel (set where?)
+	
+	// Forward
+	EReservedTextureSlot_LightvolumeInfos               = 33,
+	EReservedTextureSlot_LightVolumeRanges              = 34,
+
+	// Custom/Post
+	EReservedTextureSlot_ParticlePositionStream         = 35,
+	EReservedTextureSlot_ParticleAxesStream             = 36,
+	EReservedTextureSlot_ParticleColorSTStream          = 37,
 };
 
 ////////////////////////////////////////////////////////////////////////////
@@ -633,17 +644,18 @@ struct SResourceBindPoint
 	SResourceBindPoint(ESlotType type, uint8 slotNumber, EShaderStage shaderStages, EFlags flags = EFlags::None);
 
 	// ignore flags in all comparators (NOTE/TODO: shouldn't we ignore the stages as well?)
-	bool operator<(const SResourceBindPoint& other) const
+	bool operator<(const SResourceBindPoint& other) const noexcept
 	{
 		constexpr uint32 flagsMask = ~(0xFF << (offsetof(SResourceBindPoint, flags) * 8));
 		return (fastCompare & flagsMask) < (other.fastCompare & flagsMask);
 	}
 
-	bool operator==(const SResourceBindPoint& other) const
+	bool operator==(const SResourceBindPoint& other) const noexcept
 	{
 		constexpr uint32 flagsMask = ~(0xFF << (offsetof(SResourceBindPoint, flags) * 8));
 		return (fastCompare & flagsMask) == (other.fastCompare & flagsMask);
 	}
+	bool operator!=(const SResourceBindPoint& other) const noexcept { return !(*this == other); }
 
 	union
 	{
@@ -683,21 +695,21 @@ struct SResourceBinding
 		, type(SResourceBinding::EResourceType::InvalidType)
 	{}
 
-	inline SResourceBinding(CTexture* pTexture, ResourceViewHandle view)
-		: pTexture(pTexture)
-		, view(view)
+	inline SResourceBinding(CTexture* _pTexture, ResourceViewHandle _view)
+		: pTexture(_pTexture)
+		, view(_view)
 		, type(EResourceType::Texture)
 	{}
 
-	inline SResourceBinding(CGpuBuffer* pBuffer, ResourceViewHandle view)
-		: pBuffer(pBuffer)
-		, view(view)
+	inline SResourceBinding(CGpuBuffer* _pBuffer, ResourceViewHandle _view)
+		: pBuffer(_pBuffer)
+		, view(_view)
 		, type(EResourceType::Buffer)
 	{}
 
-	inline SResourceBinding(CConstantBuffer* pConstantBuffer, ResourceViewHandle view)
-		: pConstantBuffer(pConstantBuffer)
-		, view(view)
+	inline SResourceBinding(CConstantBuffer* _pConstantBuffer, ResourceViewHandle _view)
+		: pConstantBuffer(_pConstantBuffer)
+		, view(_view)
 		, type(EResourceType::ConstantBuffer)
 	{}
 
@@ -708,8 +720,8 @@ struct SResourceBinding
 		samplerState = _samplerState;
 	}
 
-	inline SResourceBinding(CBaseResource* pResource)
-		: pResource(pResource)
+	inline SResourceBinding(CBaseResource* _pResource)
+		: pResource(_pResource)
 		, type(EResourceType::Resource)
 	{}
 
@@ -743,37 +755,27 @@ class CResourceBindingInvalidator
 {
 
 private:
-	typedef std::pair<void*, SResourceBindPoint> SInvalidateContext;
-
 	struct SInvalidateCallback
 	{
 		int refCount;
+		SResourceBindPoint bindpoint;
 		SResourceBinding::InvalidateCallbackFunction callback;
 
-		SInvalidateCallback(const SResourceBinding::InvalidateCallbackFunction& cb)
-			: callback(cb)
-			, refCount(0)
+		SInvalidateCallback(SResourceBindPoint bindpoint)
+			: refCount(0)
+			, bindpoint(bindpoint)
 		{}
+		SInvalidateCallback(const SResourceBinding::InvalidateCallbackFunction& cb, SResourceBindPoint bindpoint)
+			: refCount(0)
+			, bindpoint(bindpoint)
+			, callback(cb)
+		{}
+		bool operator<(const SInvalidateCallback &rhs) const noexcept { return bindpoint < rhs.bindpoint; }
+		bool operator<(const SResourceBindPoint &rhs) const noexcept { return bindpoint < rhs; }
 	};
 
-	struct SHashInvalidateContext
-	{
-		size_t operator()(const SInvalidateContext& key) const
-		{
-			// void* ^ uint32, needs to be fast, not smart
-			return size_t(key.first) ^ SwapEndianValue(size_t(key.second.fastCompare), true);
-		}
-
-		bool operator()(const SInvalidateContext& key1, const SInvalidateContext& key2) const
-		{
-			return (key1.first == key2.first) & (key1.second == key2.second);
-		}
-	};
-
-	typedef std::unordered_map<SInvalidateContext, SInvalidateCallback, SHashInvalidateContext> SInvalidateRegistry;
-
-	SInvalidateRegistry m_invalidateCallbacks;
-	CryRWLock           m_invalidationLock;
+	std::unordered_map<void*, std::vector<SInvalidateCallback>> m_invalidateCallbacks;
+	CryRWLock                                                   m_invalidationLock;
 
 public:
 	CResourceBindingInvalidator() { }

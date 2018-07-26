@@ -764,7 +764,7 @@ void C3DEngine::DebugDraw_UpdateDebugNode()
 	ray_hit rayHit;
 
 	// use cam, no need for firing pos/dir
-	CCamera& cam = GetISystem()->GetViewCamera();
+	const CCamera& cam = GetISystem()->GetViewCamera();
 	const unsigned int flags = rwi_stop_at_pierceable | rwi_colltype_any;
 	const float hitRange = 2000.f;
 
@@ -1415,8 +1415,8 @@ void C3DEngine::RenderInternal(const int nRenderFlags, const SRenderingPassInfo&
 			m_fGsmRange = min(0.15f, GetCVars()->e_GsmRange);
 			m_fGsmRangeStep = min(2.8f, GetCVars()->e_GsmRangeStep);
 
-			m_fShadowsConstBias = min(GetCVars()->e_ShadowsConstBiasHQ, GetCVars()->e_ShadowsConstBias);
-			m_fShadowsSlopeBias = min(GetCVars()->e_ShadowsSlopeBiasHQ, GetCVars()->e_ShadowsSlopeBias);
+			m_fShadowsConstBias = GetCVars()->e_ShadowsConstBias;
+			m_fShadowsSlopeBias = GetCVars()->e_ShadowsSlopeBias;
 		}
 	}
 
@@ -1597,7 +1597,7 @@ void C3DEngine::RenderScene(const int nRenderFlags, const SRenderingPassInfo& pa
 	////////////////////////////////////////////////////////////////////////////////////////
 	// Add clip volumes to renderer
 	////////////////////////////////////////////////////////////////////////////////////////
-	if (m_pClipVolumeManager)
+	if (m_pClipVolumeManager && GetCVars()->e_ClipVolumes)
 		m_pClipVolumeManager->PrepareVolumesForRendering(passInfo);
 
 	if (m_pPartManager)
@@ -3084,7 +3084,7 @@ void C3DEngine::DisplayInfo(float& fTextPosX, float& fTextPosY, float& fTextStep
 
 					if (pFrameProfiler != NULL && pFrameProfiler->m_subsystem == PROFILE_AUDIO)
 					{
-						fTimeMS += pFrameProfiler->m_selfTimeHistory.GetAverage();
+						fTimeMS += pFrameProfiler->m_selfTime.Average();
 					}
 				}
 			}

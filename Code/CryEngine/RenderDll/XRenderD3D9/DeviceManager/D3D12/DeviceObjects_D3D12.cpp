@@ -2,6 +2,7 @@
 
 #include "StdAfx.h"
 #include <CryCore/CryCustomTypes.h>
+#include <CryCore/BitFiddling.h>
 #include "../../DeviceManager/DeviceObjects.h"
 #include "DriverD3D.h"
 #include "DeviceResourceSet_D3D12.h"
@@ -29,16 +30,29 @@ static auto lambdaResumeCallback = [](void* cmd, uint nPoolId)
 	reinterpret_cast<CDeviceCommandListImpl*>(cmd)->ResumeCommandListEvent(nPoolId);
 };
 
+D3D12_SHADER_VISIBILITY shaderVisibility[eHWSC_Num + 1] =
+{
+	D3D12_SHADER_VISIBILITY_VERTEX,     // eHWSC_Vertex
+	D3D12_SHADER_VISIBILITY_PIXEL,      // eHWSC_Pixel
+	D3D12_SHADER_VISIBILITY_GEOMETRY,   // eHWSC_Geometry
+	D3D12_SHADER_VISIBILITY_DOMAIN,     // eHWSC_Domain
+	D3D12_SHADER_VISIBILITY_HULL,       // eHWSC_Hull
+	D3D12_SHADER_VISIBILITY_ALL,        // eHWSC_Compute
+	D3D12_SHADER_VISIBILITY_ALL,        // eHWSC_Num
+};
+
+D3D12_DESCRIPTOR_RANGE_TYPE mapDescriptorRange[size_t(SResourceBindPoint::ESlotType::Count)] =
+{
+	D3D12_DESCRIPTOR_RANGE_TYPE_CBV,     // SResourceBindPoint::ESlotType::ConstantBuffer
+	D3D12_DESCRIPTOR_RANGE_TYPE_SRV,     // SResourceBindPoint::ESlotType::TextureAndBuffer
+	D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, // SResourceBindPoint::ESlotType::Sampler
+	D3D12_DESCRIPTOR_RANGE_TYPE_UAV,     // SResourceBindPoint::ESlotType::UnorderedAccessView
+};
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 CDeviceObjectFactory::CDeviceObjectFactory()
-	: m_fence_handle(0)
 {
 	memset(m_NullResources, 0, sizeof(m_NullResources));
-
-	m_frameFenceCounter = 0;
-	m_completedFrameFenceCounter = 0;
-	for (uint32 i = 0; i < CRY_ARRAY_COUNT(m_frameFences); i++)
-		m_frameFences[i] = NULL;
 
 	m_pCoreCommandList.reset(new CDeviceCommandList());
 	m_pCoreCommandList->m_sharedState.pCommandList = nullptr;
@@ -438,18 +452,44 @@ void CDeviceObjectFactory::ReleaseNullResources()
 }
 
 //=============================================================================
+#include "DX12/Resource/CCryDX12Resource.hpp"
+#include "DX12/Resource/Misc/CCryDX12Buffer.hpp"
 
 #ifdef DEVRES_USE_STAGING_POOL
 D3DResource* CDeviceObjectFactory::AllocateStagingResource(D3DResource* pForTex, bool bUpload, void*& pMappedAddress)
 {
 	D3DResource* pStagingResource = nullptr;
 
+#if 0
+	ICryDX12Resource* dx12Resource = DX12_EXTRACT_ICRYDX12RESOURCE(pForTex);
+	NCryDX12::CResource& rResource = dx12Resource->GetDX12Resource();
+	ID3D12Resource* d3d12Resource = rResource.GetD3D12Resource();
+
+	D3D12_RESOURCE_STATES initialState = bUpload ? D3D12_RESOURCE_STATE_GENERIC_READ : D3D12_RESOURCE_STATE_COPY_DEST;
+	ID3D12Resource* stagingResource = nullptr;
+	HRESULT result = GetDX12Device()->CreateOrReuseStagingResource(d3d12Resource, &stagingResource, bUpload);
+
+	if (result == S_OK && stagingResource != nullptr)
+	{
+		pStagingResource = CCryDX12Buffer::Create(gcpRendD3D->GetDevice_Unsynchronized().GetRealDevice(), stagingResource, initialState);
+		stagingResource->Release();
+
+		if (bUpload) // Resources on D3D12_HEAP_TYPE_READBACK heaps do not support persistent map.
+		{
+			const D3D12_RANGE sNoRead = { 0, 0 }; // It is valid to specify the CPU won't read any data by passing a range where End is less than or equal to Begin
+			const D3D12_RANGE sFullRead = { 0, SIZE_T(rResource.GetSize(0, 1)) };
+
+			result = stagingResource->Map(0, bUpload ? &sNoRead : &sFullRead, &pMappedAddress);
+		}
+	}
+#else
 	gcpRendD3D->GetDevice_Unsynchronized().CreateStagingResource(pForTex, &pStagingResource, bUpload);
 
 	if (bUpload) // Resources on D3D12_HEAP_TYPE_READBACK heaps do not support persistent map.
 	{
 		gcpRendD3D->GetDeviceContext_Unsynchronized().MapStagingResource(pStagingResource, bUpload, &pMappedAddress);
 	}
+#endif
 
 	return pStagingResource;
 }
@@ -458,10 +498,44 @@ void CDeviceObjectFactory::ReleaseStagingResource(D3DResource* pStagingTex)
 {
 	if (pStagingTex)
 	{
+#if 0
+		if (false /* TODO: rResource.IsPersistentMappable() */) // Resources on D3D12_HEAP_TYPE_READBACK heaps do not support persistent map.
+		{
+			ICryDX12Resource* dx12Resource = DX12_EXTRACT_ICRYDX12RESOURCE(pStagingTex);
+			NCryDX12::CResource& rResource = dx12Resource->GetDX12Resource();
+
+			const D3D12_RANGE sNoWrite = { 0, 0 }; // It is valid to specify the CPU didn't write any data by passing a range where End is less than or equal to Begin.
+			const D3D12_RANGE sFullWrite = { 0, SIZE_T(rResource.GetSize(0, 1)) };
+
+			rResource.GetD3D12Resource()->Unmap(0, true ? &sFullWrite : &sNoWrite);
+		}
+
+		RecycleResource(pStagingTex);
+#else
+		if (false /* TODO: rResource.IsPersistentMappable() */) // Resources on D3D12_HEAP_TYPE_READBACK heaps do not support persistent map.
+		{
+			gcpRendD3D->GetDeviceContext_Unsynchronized().UnmapStagingResource(pStagingTex, true);
+		}
+
 		gcpRendD3D->GetDevice_Unsynchronized().ReleaseStagingResource(pStagingTex);
+#endif
 	}
 }
 #endif
+
+void CDeviceObjectFactory::ReleaseResource(D3DResource* pResource)
+{
+	pResource->Release(); // Tracking embedded in destructor of wrapped object
+}
+
+void CDeviceObjectFactory::RecycleResource(D3DResource* pResource)
+{
+	ICryDX12Resource* dx12Resource = DX12_EXTRACT_ICRYDX12RESOURCE(pResource);
+	NCryDX12::CResource& rResource = dx12Resource->GetDX12Resource();
+
+	rResource.MakeReusableResource(true);
+	pResource->Release(); // Tracking embedded in destructor of wrapped object
+}
 
 //=============================================================================
 

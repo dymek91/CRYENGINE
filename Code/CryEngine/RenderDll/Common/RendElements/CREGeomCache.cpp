@@ -206,16 +206,16 @@ InputLayoutHandle CREGeomCache::GetVertexFormat() const
 
 bool CREGeomCache::GetGeometryInfo(SGeometryInfo& streams, bool bSupportTessellation)
 {
-	ZeroStruct(streams);
 	streams.eVertFormat = GetVertexFormat();
 	streams.nFirstIndex = 0;
 	streams.nFirstVertex = 0;
 	streams.nNumIndices = 0;
 	streams.primitiveType = eptTriangleList;
+
 	return true;
 }
 
-void CREGeomCache::DrawToCommandList(CRenderObject* pObj, const SGraphicsPipelinePassContext& ctx)
+void CREGeomCache::DrawToCommandList(CRenderObject* pObj, const SGraphicsPipelinePassContext& ctx, CDeviceCommandList* commandList)
 {
 	//mfUpdate(0, FCEF_TRANSFORM, false); //TODO: check if correct
 

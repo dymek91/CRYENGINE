@@ -73,14 +73,16 @@
 #endif
 
 // CONSTANT_BUFFER_ENABLE_DIRECT_ACCESS
-// Enable if we have direct access to video memory and the device manager
-// should manage constant buffers
+// Enable if we can directly write to subranges of constant buffers while they are in use by the GPU
+// and the device manager should manage constant buffers
 #if BUFFER_ENABLE_DIRECT_ACCESS == 1
-	#if CRY_PLATFORM_DURANGO || (CRY_RENDERER_DIRECT3D >= 120) || CRY_RENDERER_GNM || CRY_RENDERER_VULKAN
+	#if CRY_PLATFORM_DURANGO || (CRY_RENDERER_DIRECT3D >= 111) || CRY_RENDERER_GNM || CRY_RENDERER_VULKAN
 		#define CONSTANT_BUFFER_ENABLE_DIRECT_ACCESS 1
 	#else
 		#define CONSTANT_BUFFER_ENABLE_DIRECT_ACCESS 0
 	#endif
+#elif (CRY_RENDERER_DIRECT3D >= 111) && (CRY_RENDERER_DIRECT3D < 120)
+	#define CONSTANT_BUFFER_ENABLE_DIRECT_ACCESS 1
 #else
 	#define CONSTANT_BUFFER_ENABLE_DIRECT_ACCESS 0
 #endif
@@ -226,20 +228,27 @@ typedef void (*RenderFunc)(void);
 #if CRY_PLATFORM_WINDOWS && CRY_RENDERER_DIRECT3D && !CRY_RENDERER_OPENGL && !CRY_RENDERER_OPENGLES && !CRY_RENDERER_VULKAN
 // nv API
 	#if !defined(EXCLUDE_NV_API)
-	#define USE_NV_API 1
-	#define NV_API_HEADER "NVIDIA/NVAPI_r386/nvapi.h"
+		#define USE_NV_API 1
+		#define NV_API_HEADER "NVIDIA/NVAPI_r386/nvapi.h"
 
-	#if CRY_PLATFORM_64BIT
-		#define NV_API_LIB "SDKs/NVIDIA/NVAPI_r386/amd64/nvapi64.lib"
-	#else
-		#define NV_API_LIB "SDKs/NVIDIA/NVAPI_r386/x86/nvapi.lib"
+		#if CRY_PLATFORM_64BIT
+			#define NV_API_LIB "SDKs/NVIDIA/NVAPI_r386/amd64/nvapi64.lib"
+		#else
+			#define NV_API_LIB "SDKs/NVIDIA/NVAPI_r386/x86/nvapi.lib"
+		#endif
 	#endif
-#endif
 
 	// AMD EXT (DX11 only)
 	#if !defined(EXCLUDE_AMD_API) && (CRY_RENDERER_DIRECT3D >= 110) && (CRY_RENDERER_DIRECT3D < 120)
-	#define USE_AMD_EXT 1
-#endif
+		#define USE_AMD_API 1
+		#define AMD_API_HEADER "AMD/AGS Lib/inc/amd_ags.h"
+
+		#if CRY_PLATFORM_64BIT
+			#define AMD_API_LIB "SDKs/AMD/AGS Lib/lib/amd_ags_x64.lib"
+		#else
+			#define AMD_API_LIB "SDKs/AMD/AGS Lib/lib/amd_ags_x86.lib"
+		#endif
+	#endif
 #endif
 
 
@@ -298,6 +307,10 @@ typedef void (*RenderFunc)(void);
 		#include <d3d11sdklayers.h>
 		#include <d3d11shader.h>
 		#include <d3dcompiler.h>
+
+		#define VIRTUALGFX virtual
+		#define FINALGFX final
+		#define IID_GFX_ARGS IID_PPV_ARGS
 	#endif
 
 	#if CRY_PLATFORM_WINDOWS && !CRY_RENDERER_OPENGL
@@ -326,13 +339,6 @@ typedef void (*RenderFunc)(void);
 	#else
 		#include <d3d12.h>       // includes <windows.h>
 		#include <dxgi1_5.h>     // includes <windows.h>
-		
-		#if (CRY_RENDERER_DIRECT3D >= 121)
-			#include <d3d12_1.h> // includes <windows.h>
-		#endif
-		#if (CRY_RENDERER_DIRECT3D >= 122)
-			#include <d3d12_2.h> // includes <windows.h>
-		#endif
 
 		#include <d3d12sdklayers.h>
 		#include <d3d11shader.h>
@@ -744,7 +750,10 @@ typedef void (*RenderFunc)(void);
 	typedef uintptr_t SOCKET;
 
 #elif (CRY_RENDERER_DIRECT3D < 120)
-    typedef     ID3D11Resource            ID3D11BaseTexture;
+	typedef     ID3D11Resource            ID3D11BaseTexture;
+	typedef     ID3D11Query               ID3D11Fence;
+
+	#include "XRenderD3D9/DX11/CryDX11.hpp"
 #endif
 
 typedef D3DSamplerState CDeviceSamplerState;
@@ -752,8 +761,8 @@ typedef D3DInputLayout  CDeviceInputLayout;
 typedef D3DBaseView     CDeviceResourceView;
 
 //////////////////////////////////////////////////////////////////////////
-#define MAX_FRAME_LATENCY    1
-#define MAX_FRAMES_IN_FLIGHT (MAX_FRAME_LATENCY + 1)    // Current and Last
+#define MAX_FRAME_LATENCY    3                          // At most 16 - 1 (DXGI limitation)
+#define MAX_FRAMES_IN_FLIGHT (MAX_FRAME_LATENCY + 1)    // Current frame and frames buffered by driver/GPU
 
 #if CRY_PLATFORM_DURANGO
 	#include <xg.h>
@@ -787,7 +796,7 @@ typedef D3DBaseView     CDeviceResourceView;
 
 #if (CRY_RENDERER_DIRECT3D >= 120) || CRY_RENDERER_VULKAN || CRY_RENDERER_GNM
 // ConstantBuffer/ShaderResource/UnorderedAccess need markers,
-// VerbexBuffer/IndexBuffer are fine with discard
+// VertexBuffer/IndexBuffer are fine with discard
 	#define D3D11_MAP_WRITE_DISCARD_VB      D3D11_MAP(D3D11_MAP_WRITE_DISCARD)
 	#define D3D11_MAP_WRITE_DISCARD_IB      D3D11_MAP(D3D11_MAP_WRITE_DISCARD)
 	#define D3D11_MAP_WRITE_DISCARD_CB      D3D11_MAP(D3D11_MAP_WRITE_DISCARD + DX12_MAP_DISCARD_MARKER)
@@ -802,6 +811,7 @@ typedef D3DBaseView     CDeviceResourceView;
 
 	#define D3D11_COPY_NO_OVERWRITE_REVERT  D3D11_COPY_FLAGS(D3D11_COPY_NO_OVERWRITE + DX12_COPY_REVERTSTATE_MARKER)
 	#define D3D11_COPY_NO_OVERWRITE_PXLSRV  D3D11_COPY_FLAGS(D3D11_COPY_NO_OVERWRITE + DX12_COPY_PIXELSTATE_MARKER)
+	#define D3D11_COPY_NO_OVERWRITE_CONC    D3D11_COPY_FLAGS(D3D11_COPY_NO_OVERWRITE + DX12_COPY_CONCURRENT_MARKER)
 	#define D3D11_RESOURCE_MISC_UAV_OVERLAP D3D11_RESOURCE_MISC_FLAG(DX12_RESOURCE_FLAG_OVERLAP)
 	#define D3D11_RESOURCE_MISC_HIFREQ_HEAP D3D11_RESOURCE_MISC_FLAG(DX12_RESOURCE_FLAG_HIFREQ_HEAP)
 #else
@@ -811,23 +821,38 @@ typedef D3DBaseView     CDeviceResourceView;
 	#define D3D11_MAP_WRITE_DISCARD_SR      (D3D11_MAP_WRITE_DISCARD)
 	#define D3D11_MAP_WRITE_DISCARD_UA      (D3D11_MAP_WRITE_DISCARD)
 
-// NO_OVERWRITE on CBs/SRs-UAs could actually work when we require 11.1
-// and check the feature in D3D11_FEATURE_DATA_D3D11_OPTIONS
+#if CRY_PLATFORM_DURANGO
 	#define D3D11_MAP_WRITE_NO_OVERWRITE_VB (D3D11_MAP_WRITE_NO_OVERWRITE)
 	#define D3D11_MAP_WRITE_NO_OVERWRITE_IB (D3D11_MAP_WRITE_NO_OVERWRITE)
-	#define D3D11_MAP_WRITE_NO_OVERWRITE_CB (D3D11_MAP_WRITE_DISCARD)
-	#define D3D11_MAP_WRITE_NO_OVERWRITE_SR (D3D11_MAP_WRITE_DISCARD)
-	#define D3D11_MAP_WRITE_NO_OVERWRITE_UA (D3D11_MAP_WRITE_DISCARD)
+	#define D3D11_MAP_WRITE_NO_OVERWRITE_CB (D3D11_MAP_WRITE_NO_OVERWRITE)
+	#define D3D11_MAP_WRITE_NO_OVERWRITE_SR (D3D11_MAP_WRITE_NO_OVERWRITE)
+	#define D3D11_MAP_WRITE_NO_OVERWRITE_UA (D3D11_MAP_WRITE_NO_OVERWRITE)
+#else
+	// NO_OVERWRITE on CBs/SRs-UAs could actually work when we require 11.1
+	// and check the feature in D3D11_FEATURE_DATA_D3D11_OPTIONS, but because
+	// we would keep using ID3D11DeviceContext::Map (11.0 context) it's
+	// possible to use these features even though no 11.1 context is present.
+	extern D3D11_MAP D3D11_MAP_WRITE_NO_OVERWRITE_OPTIONAL[3];
+
+	#define D3D11_MAP_WRITE_NO_OVERWRITE_VB (D3D11_MAP_WRITE_NO_OVERWRITE)
+	#define D3D11_MAP_WRITE_NO_OVERWRITE_IB (D3D11_MAP_WRITE_NO_OVERWRITE)
+	#define D3D11_MAP_WRITE_NO_OVERWRITE_CB (D3D11_MAP_WRITE_NO_OVERWRITE_OPTIONAL[0])
+	#define D3D11_MAP_WRITE_NO_OVERWRITE_SR (D3D11_MAP_WRITE_NO_OVERWRITE_OPTIONAL[1])
+	#define D3D11_MAP_WRITE_NO_OVERWRITE_UA (D3D11_MAP_WRITE_NO_OVERWRITE_OPTIONAL[2])
+#endif
 
 #if (CRY_RENDERER_DIRECT3D >= 111)
 	#define D3D11_COPY_NO_OVERWRITE_REVERT  D3D11_COPY_NO_OVERWRITE
 	#define D3D11_COPY_NO_OVERWRITE_PXLSRV  D3D11_COPY_NO_OVERWRITE
+	#define D3D11_COPY_NO_OVERWRITE_CONC    D3D11_COPY_NO_OVERWRITE
 #else
 	#define D3D11_COPY_NO_OVERWRITE_REVERT  (0)
 	#define D3D11_COPY_NO_OVERWRITE_PXLSRV  (0)
+	#define D3D11_COPY_NO_OVERWRITE_CONC    (0)
 #endif
+
 	#define D3D11_RESOURCE_MISC_UAV_OVERLAP D3D11_RESOURCE_MISC_FLAG(0)
-	#define D3D11_RESOURCE_MISC_HIFREQ_HEAP D3D11_RESOURCE_MISC_FLAG(0)
+	#define D3D11_RESOURCE_MISC_HIFREQ_HEAP D3D11_RESOURCE_MISC_FLAG(DX11_RESOURCE_FLAG_HIFREQ_HEAP)
 #endif
 
 #if !defined(USE_D3DX)

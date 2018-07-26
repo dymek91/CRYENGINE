@@ -13,8 +13,6 @@
 #include "../XRenderD3D9/GraphicsPipeline/Common/PrimitiveRenderPass.h"
 #include "../XRenderD3D9/GraphicsPipeline/Common/UtilityPasses.h"
 
-#include <Common/Textures/TempDepthTexture.h>
-
 #define ENABLE_FLASH_FILTERS
 
 struct IRenderer;
@@ -168,12 +166,13 @@ struct SSF_GlobalDrawParams
 	//////////////////////////////////////////////////////////////////////////
 	struct OutputParams : private NoCopy
 	{
+		typedef _smart_ptr<CTexture> TexSmartPtr;
+
 		int key;
 
 		// Backups for GraphicsPipeline = 0
-		CResourcePool<STempDepthTexture>::value_type tempDepthTexture;
-		CTexture* pRenderTarget;
-		CTexture* pStencilTarget;
+		TexSmartPtr pRenderTarget;
+		TexSmartPtr pStencilTarget;
 		Matrix44 oldViewMat;
 		int oldViewportWidth;
 		int oldViewportHeight;
@@ -383,7 +382,7 @@ public:
 
 	// Helper functions
 	static void RenderFlashPlayerToTexture(IFlashPlayer* pFlashPlayer, CTexture* pOutput);
-	static void RenderFlashPlayerToOutput(IFlashPlayer* pFlashPlayer, CRenderOutputPtr output);
+	static void RenderFlashPlayerToOutput(IFlashPlayer* pFlashPlayer, const std::shared_ptr<CRenderOutput> &output);
 
 	void SetRenderOutput(std::shared_ptr<CRenderOutput> pRenderOutput);
 	

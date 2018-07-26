@@ -195,8 +195,11 @@ void CStatObj::FillRenderObject(const SRendParams& rParams, IRenderNode* pRender
 	if (pRenderNode && pRenderNode->GetRndFlags() & ERF_RECVWIND)
 	{
 		// This can be different for CVegetation class render nodes
-		pObj->m_vegetationBendingData.scale = 1.0f; //#TODO Read it from RenderNode?
-		pObj->m_vegetationBendingData.verticalRadius = GetRadiusVert();
+		pObj->SetBendingData({ 1.0f, GetRadiusVert() }, passInfo);
+	}
+	else
+	{
+		pObj->SetBendingData({ 0.0f, 0.0f }, passInfo);
 	}
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -321,6 +324,9 @@ bool CStatObj::RenderDebugInfo(CRenderObject* pObj, const SRenderingPassInfo& pa
 		bFiltered = name.find(e_DebugDrawFilter) == string::npos;
 	}
 
+	if (pObj->m_fDistance > GetCVars()->e_DebugDrawMaxDistance)
+		return false;
+
 	if ((GetCVars()->e_DebugDraw == 1 || bOnlyBoxes) && !bFiltered)
 	{
 		if (!m_bMerged)
@@ -380,15 +386,54 @@ bool CStatObj::RenderDebugInfo(CRenderObject* pObj, const SRenderingPassInfo& pa
 		{
 		case 1:
 			{
+				float fontSize = 1.3f;
+				ColorB clr;
+
+				if (nLod == 0)
+				{
+					clr = ColorB(255, 0, 0, 255);
+					fontSize = 1.3f;
+				}
+				else if (nLod == 1)
+				{
+					clr = ColorB(0, 255, 0, 255);
+					fontSize = 1.5f;
+				}
+				else if (nLod == 2)
+				{
+					clr = ColorB(200, 100, 255, 255);
+					fontSize = 1.7f;
+				}
+				else if (nLod == 3)
+				{
+					clr = ColorB(0, 255, 255, 255);
+					fontSize = 1.9f;
+				}
+				else if (nLod == 4)
+				{
+					clr = ColorB(255, 255, 0, 255);
+					fontSize = 2.1f;
+				}
+				else if (nLod == 5)
+				{
+					clr = ColorB(255, 0, 255, 255);
+					fontSize = 2.3f;
+				}
+				else
+				{
+					clr = ColorB(255, 255, 255, 255);
+					fontSize = 2.5f;
+				}
+				
 				const char* shortName = "";
 				if (!m_szGeomName.empty())
 					shortName = m_szGeomName.c_str();
 				else
 					shortName = PathUtil::GetFile(m_szFileName.c_str());
 				if (nNumLods > 1)
-					IRenderAuxText::DrawLabelExF(pos, 1.3f, color, true, true, "%s\n%d (LOD %d/%d)", shortName, m_nRenderTrisCount, nLod, nNumLods);
+					IRenderAuxText::DrawLabelExF(pos, fontSize, clr, true, true, "%s\n%d (LOD %d/%d)", shortName, m_nRenderTrisCount, nLod, nNumLods);
 				else
-					IRenderAuxText::DrawLabelExF(pos, 1.3f, color, true, true, "%s\n%d", shortName, m_nRenderTrisCount);
+					IRenderAuxText::DrawLabelExF(pos, fontSize, clr, true, true, "%s\n%d", shortName, m_nRenderTrisCount);
 			}
 			break;
 
@@ -1196,7 +1241,7 @@ void CStatObj::RenderSubObjectInternal(CRenderObject* pRenderObject, int nLod, c
 		return;
 
 	// try next lod's if selected one is not ready
-	if ((!nLod && m_pRenderMesh && m_pRenderMesh->CanRender()) || !GetCVars()->e_Lods)
+	if ((!nLod && m_pRenderMesh && m_pRenderMesh->CanUpdate()) || !GetCVars()->e_Lods)
 	{
 		PrefetchLine(pRenderObject, 0);
 		RenderRenderMesh(pRenderObject, NULL, passInfo);
@@ -1220,7 +1265,7 @@ void CStatObj::RenderSubObjectInternal(CRenderObject* pRenderObject, int nLod, c
 		if (m_pLODs)
 			for (; nLod <= (int)m_nMaxUsableLod; nLod++)
 			{
-				if (m_pLODs[nLod] && m_pLODs[nLod]->m_pRenderMesh && m_pLODs[nLod]->m_pRenderMesh->CanRender())
+				if (m_pLODs[nLod] && m_pLODs[nLod]->m_pRenderMesh && m_pLODs[nLod]->m_pRenderMesh->CanUpdate())
 				{
 					PrefetchLine(pRenderObject, 0);
 					m_pLODs[nLod]->RenderRenderMesh(pRenderObject, NULL, passInfo);
@@ -1271,7 +1316,7 @@ void CStatObj::RenderObjectInternal(CRenderObject* pRenderObject, int nTargetLod
 	}
 
 	// try next lod's if selected one is not ready
-	if ((!nLod && m_pRenderMesh && m_pRenderMesh->CanRender()) || !GetCVars()->e_Lods)
+	if ((!nLod && m_pRenderMesh && m_pRenderMesh->CanUpdate()) || !GetCVars()->e_Lods)
 	{
 		PrefetchLine(pRenderObject, 0);
 		RenderRenderMesh(pRenderObject, NULL, passInfo);
@@ -1295,7 +1340,7 @@ void CStatObj::RenderObjectInternal(CRenderObject* pRenderObject, int nTargetLod
 		if (m_pLODs)
 			for (; nLod <= (int)m_nMaxUsableLod; nLod++)
 			{
-				if (m_pLODs[nLod] && m_pLODs[nLod]->m_pRenderMesh && m_pLODs[nLod]->m_pRenderMesh->CanRender())
+				if (m_pLODs[nLod] && m_pLODs[nLod]->m_pRenderMesh && m_pLODs[nLod]->m_pRenderMesh->CanUpdate())
 				{
 					PrefetchLine(pRenderObject, 0);
 					m_pLODs[nLod]->RenderRenderMesh(pRenderObject, NULL, passInfo);
@@ -1403,7 +1448,7 @@ int CStatObj::GetMinUsableLod()
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-int CStatObj::FindNearesLoadedLOD(int nLodIn, bool bSearchUp)
+int CStatObj::FindNearestLoadedLOD(int nLodIn, bool bSearchUp)
 {
 	// make sure requested lod is loaded
 	/*  if(CStatObj * pObjForStreamIn = nLodIn ? m_pLODs[nLodIn] : this)
@@ -1416,10 +1461,10 @@ int CStatObj::FindNearesLoadedLOD(int nLodIn, bool bSearchUp)
 	// if requested lod is not ready - find nearest ready one
 	int nLod = nLodIn;
 
-	if (nLod == 0 && !GetRenderMesh())
+	if (nLod == 0 && (!GetRenderMesh() || !GetRenderMesh()->CanUpdate()))
 		nLod++;
 
-	while (nLod && nLod < MAX_STATOBJ_LODS_NUM && (!m_pLODs || !m_pLODs[nLod] || !m_pLODs[nLod]->GetRenderMesh()))
+	while (nLod && nLod < MAX_STATOBJ_LODS_NUM && (!m_pLODs || !m_pLODs[nLod] || !m_pLODs[nLod]->GetRenderMesh() || !m_pLODs[nLod]->GetRenderMesh()->CanUpdate()))
 		nLod++;
 
 	if (nLod >(int)m_nMaxUsableLod)
@@ -1428,10 +1473,10 @@ int CStatObj::FindNearesLoadedLOD(int nLodIn, bool bSearchUp)
 		{
 			nLod = min((int)m_nMaxUsableLod, nLodIn);
 
-			while (nLod && (!m_pLODs || !m_pLODs[nLod] || !m_pLODs[nLod]->GetRenderMesh()))
+			while (nLod && (!m_pLODs || !m_pLODs[nLod] || !m_pLODs[nLod]->GetRenderMesh() || !m_pLODs[nLod]->GetRenderMesh()->CanUpdate()))
 				nLod--;
 
-			if (nLod == 0 && !GetRenderMesh())
+			if (nLod == 0 && (!GetRenderMesh() || !GetRenderMesh()->CanUpdate()))
 				nLod--;
 		}
 		else

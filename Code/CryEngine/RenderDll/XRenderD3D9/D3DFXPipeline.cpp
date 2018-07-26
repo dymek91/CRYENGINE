@@ -144,7 +144,7 @@ bool CD3D9Renderer::FX_DrawToRenderTarget(
 			char name[128];
 			cry_sprintf(name, "$RT_ENV_2D_%d", m_TexGenID++);
 			int flags = FT_NOMIPS | FT_STATE_CLAMP | FT_DONT_STREAM | FT_USAGE_RENDERTARGET;
-			pEnvTex->m_pTex = new SDynTexture(nWidth, nHeight, eTF, eTT_2D, flags, name);
+			pEnvTex->m_pTex = new SDynTexture(nWidth, nHeight, Clr_Transparent, eTF, eTT_2D, flags, name);
 			pEnvTex->m_pTex->Update(nWidth, nHeight);
 			pRT->m_nWidth = nWidth;
 			pRT->m_nHeight = nHeight;
@@ -222,7 +222,7 @@ bool CD3D9Renderer::FX_DrawToRenderTarget(
 		char name[128];
 		cry_sprintf(name, "$RT_2D_%d", m_TexGenID++);
 		int flags = FT_NOMIPS | FT_STATE_CLAMP | FT_DONT_STREAM;
-		pEnvTex->m_pTex = new SDynTexture(nWidth, nHeight, eTF, eTT_2D, flags, name);
+		pEnvTex->m_pTex = new SDynTexture(nWidth, nHeight, Clr_Transparent, eTF, eTT_2D, flags, name);
 		assert(nWidth > 0 && nWidth <= m_d3dsdBackBuffer.Width);
 		assert(nHeight > 0 && nHeight <= m_d3dsdBackBuffer.Height);
 		pEnvTex->m_pTex->Update(nWidth, nHeight);
@@ -254,7 +254,7 @@ bool CD3D9Renderer::FX_DrawToRenderTarget(
 
 		I3DEngine* eng               = (I3DEngine*)gEnv->p3DEngine;
 		int nVisibleWaterPixelsCount = eng->GetOceanVisiblePixelsCount() / 2;            // bug in occlusion query returns 2x more
-		int nPixRatioThreshold       = (int)(CRendererResources::s_renderWidth * CRendererResources::s_renderHeight * CRenderer::CV_r_waterreflections_min_visible_pixels_update);
+		int nPixRatioThreshold       = (int)(CRendererResources::s_renderArea * CRenderer::CV_r_waterreflections_min_visible_pixels_update);
 
 		static int nVisWaterPixCountPrev = nVisibleWaterPixelsCount;
 		if (CRenderer::CV_r_waterreflections_mgpu)

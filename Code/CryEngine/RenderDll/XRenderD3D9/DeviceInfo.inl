@@ -115,6 +115,10 @@ bool GetForcedFeatureLevel(D3D_FEATURE_LEVEL* pForcedFeatureLevel)
 }
 #endif // !defined(_RELEASE)
 
+#if (CRY_RENDERER_DIRECT3D >= 110)
+	#include "dxgi1_4.h"
+#endif
+
 bool DeviceInfo::CreateDevice(int zbpp, OnCreateDeviceCallback pCreateDeviceCallback, CreateWindowCallback pCreateWindowCallback)
 {
 #if CRY_RENDERER_VULKAN
@@ -162,7 +166,20 @@ bool DeviceInfo::CreateDevice(int zbpp, OnCreateDeviceCallback pCreateDeviceCall
 #endif //!defined(_RELEASE)
 
 			const D3D_DRIVER_TYPE driverType = m_driverType == D3D_DRIVER_TYPE_HARDWARE ? D3D_DRIVER_TYPE_UNKNOWN : m_driverType;
-			HRESULT hr = D3D11CreateDeviceAndSwapChain(m_pAdapter, driverType, 0, m_creationFlags, aFeatureLevels, uNumFeatureLevels, D3D11_SDK_VERSION, &m_swapChainDesc, &m_pSwapChain, &m_pDevice, &m_featureLevel, &m_pContext);
+			HRESULT hr = D3D11CreateDeviceAndSwapChain(
+				m_pAdapter,
+				driverType,
+				0,
+				m_creationFlags,
+				aFeatureLevels,
+				uNumFeatureLevels,
+				D3D11_SDK_VERSION,
+				&m_swapChainDesc,
+				&m_pSwapChain,
+				&m_pDevice,
+				&m_featureLevel,
+				&m_pContext);
+			
 			if (SUCCEEDED(hr) && m_pDevice && m_pSwapChain)
 			{
 				if (SUCCEEDED(m_pAdapter->EnumOutputs(0, &pOutput)) && pOutput)
@@ -287,7 +304,7 @@ bool DeviceInfo::CreateDevice(int zbpp, OnCreateDeviceCallback pCreateDeviceCall
 	#if (CRY_RENDERER_DIRECT3D >= 120)
 			(FP_D3D11CreateDevice)DX12CreateDevice;
 	#else
-		  (FP_D3D11CreateDevice)GetProcAddress(LoadLibraryA("d3d11.dll"), "D3D11CreateDevice");
+			(FP_D3D11CreateDevice)DX11CreateDevice;
 	#endif
 
 		if (pD3D11CD)
@@ -338,8 +355,11 @@ bool DeviceInfo::CreateDevice(int zbpp, OnCreateDeviceCallback pCreateDeviceCall
 	#if CRY_RENDERER_DIRECT3D >= 120
 						pDevice->CheckFeatureSupport((D3D11_FEATURE)D3D12_FEATURE_D3D12_OPTIONS , &m_D3D120aOptions, sizeof(m_D3D120aOptions));
 						pDevice->CheckFeatureSupport((D3D11_FEATURE)D3D12_FEATURE_D3D12_OPTIONS1, &m_D3D120bOptions, sizeof(m_D3D120bOptions));
-		#if CRY_RENDERER_DIRECT3D >= 121
+		#if NTDDI_WIN10_RS2 && (WDK_NTDDI_VERSION >= NTDDI_WIN10_RS2)
 						pDevice->CheckFeatureSupport((D3D11_FEATURE)D3D12_FEATURE_D3D12_OPTIONS2, &m_D3D120cOptions, sizeof(m_D3D120cOptions));
+		#if NTDDI_WIN10_RS3 && (WDK_NTDDI_VERSION >= NTDDI_WIN10_RS3)
+						pDevice->CheckFeatureSupport((D3D11_FEATURE)D3D12_FEATURE_D3D12_OPTIONS3, &m_D3D120dOptions, sizeof(m_D3D120dOptions));
+		#endif
 		#endif
 	#elif CRY_RENDERER_DIRECT3D >= 110
 						pDevice->CheckFeatureSupport((D3D11_FEATURE)D3D11_FEATURE_D3D11_OPTIONS , &m_D3D110aOptions, sizeof(m_D3D110aOptions));
@@ -353,24 +373,25 @@ bool DeviceInfo::CreateDevice(int zbpp, OnCreateDeviceCallback pCreateDeviceCall
 		#endif
 		#endif
 		#endif
+						D3D11_MAP_WRITE_NO_OVERWRITE_OPTIONAL[0 /*CB*/] = m_D3D110aOptions.MapNoOverwriteOnDynamicConstantBuffer ? D3D11_MAP_WRITE_NO_OVERWRITE : D3D11_MAP_WRITE_DISCARD;
+						D3D11_MAP_WRITE_NO_OVERWRITE_OPTIONAL[1 /*SR*/] = m_D3D110aOptions.MapNoOverwriteOnDynamicBufferSRV      ? D3D11_MAP_WRITE_NO_OVERWRITE : D3D11_MAP_WRITE_DISCARD;
+						D3D11_MAP_WRITE_NO_OVERWRITE_OPTIONAL[2 /*UA*/] =                                                                                         D3D11_MAP_WRITE_DISCARD;
 	#endif
+#endif
+
+#if (CRY_RENDERER_DIRECT3D >= 111) && (CRY_RENDERER_DIRECT3D < 120)
+						if (!m_D3D110aOptions.MapNoOverwriteOnDynamicConstantBuffer)
+							CryFatalError("D3D11.1 feature 'MapNoOverwriteOnDynamicConstantBuffer' is required!");
 #endif
 
 						// Promote interfaces to the required level
 						pDevice->QueryInterface(__uuidof(D3DDevice), (void**)&m_pDevice);
 						pContext->QueryInterface(__uuidof(D3DDeviceContext), (void**)&m_pContext);
 
-						{
-							DXGIDevice* pDXGIDevice = 0;
-							if (SUCCEEDED(pDevice->QueryInterface(__uuidof(DXGIDevice), (void**) &pDXGIDevice)) && pDXGIDevice)
-								pDXGIDevice->SetMaximumFrameLatency(MAX_FRAME_LATENCY);
-							SAFE_RELEASE(pDXGIDevice);
-						}
-
 						IDXGIOutput* pOutput = nullptr;
 						if (SUCCEEDED(pAdapter->EnumOutputs(0, &pOutput)) && pOutput)
 						{
-							m_pAdapter->GetDesc1(&m_adapterDesc);
+							pAdapter->GetDesc1(&m_adapterDesc);
 							break;
 						}
 						else if (r_overrideDXGIAdapter >= 0)
@@ -409,8 +430,29 @@ bool DeviceInfo::CreateDevice(int zbpp, OnCreateDeviceCallback pCreateDeviceCall
 	SAFE_RELEASE(pAdapter);
 
 #if CRY_PLATFORM_WINDOWS
+	// Change adapter memory maximum utilization to 7/8th -------------------------------------------------------------------------
+#if (CRY_RENDERER_DIRECT3D >= 110)
+	if (m_pAdapter)
+	{
+
+		const auto memoryReservationLimit = m_adapterDesc.DedicatedVideoMemory * 7 / 8;
+#if (CRY_RENDERER_DIRECT3D >= 120)
+		m_pAdapter->SetVideoMemoryReservation(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, memoryReservationLimit);
+#else
+		IDXGIAdapter3* pAdapter3 = nullptr;
+		m_pAdapter->QueryInterface(__uuidof(IDXGIAdapter3), (void**)&pAdapter3);
+		if (pAdapter3)
+		{
+			pAdapter3->SetVideoMemoryReservation(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, memoryReservationLimit);
+			pAdapter3->Release();
+		}
+#endif
+	}
+#endif
+
+	// Enable debug-layer live object reporting -----------------------------------------------------------------------------------
 #if defined(DX11_ALLOW_D3D_DEBUG_RUNTIME)
-	if (true)
+	if (m_pDevice)
 	{
 		// TODO: Make it work, it's re right approach, maybe the flag is reset again?
 		HRESULT hr = S_FALSE;
@@ -420,7 +462,7 @@ bool DeviceInfo::CreateDevice(int zbpp, OnCreateDeviceCallback pCreateDeviceCall
 		SAFE_RELEASE(pDebugDevice);
 	}
 #endif
-	#endif
+#endif
 
 	HWND hWnd = pCreateWindowCallback ? pCreateWindowCallback() : 0;
 	if (!hWnd)

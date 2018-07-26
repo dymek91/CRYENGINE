@@ -50,30 +50,12 @@ void CSnowStage::Init()
 
 	CRY_ASSERT(m_pSnowFrostBumpTex == nullptr);
 	m_pSnowFrostBumpTex = CTexture::ForNamePtr("%ENGINE%/EngineAssets/Textures/Frozen/frost_noise3.dds", FT_DONT_STREAM, eTF_Unknown);
-
-	CRY_ASSERT(m_pSnowDisplacementTex == nullptr);
-	m_pSnowDisplacementTex = CTexture::GetOrCreateTextureObject("$SnowDisplacement", 0, 0, 0, eTT_2D, FT_DONT_STREAM | FT_USAGE_RENDERTARGET, eTF_R8G8B8A8);
 }
 
 void CSnowStage::Update()
 {
 	CD3D9Renderer* const RESTRICT_POINTER rd = gcpRendD3D;
 	const CRenderView* pRenderView = RenderView();
-
-	const bool bSnowDisplacement = (CRenderer::CV_r_snow > 0) && (CRenderer::CV_r_snow_displacement > 0);
-
-	if (!bSnowDisplacement && CTexture::IsTextureExist(m_pSnowDisplacementTex))
-	{
-		m_pSnowDisplacementTex->ReleaseDeviceTexture(false);
-	}
-
-	if (bSnowDisplacement && !CTexture::IsTextureExist(m_pSnowDisplacementTex))
-	{
-		const int32 renderWidth  = pRenderView->GetRenderResolution()[0];
-		const int32 renderHeight = pRenderView->GetRenderResolution()[1];
-
-		m_pSnowDisplacementTex->Create2DTexture(renderWidth, renderHeight, 1, FT_DONT_STREAM | FT_USAGE_RENDERTARGET, nullptr, eTF_R8G8B8A8);
-	}
 
 	if (pRenderView->GetCurrentEye() != CCamera::eEye_Right)
 	{
@@ -85,6 +67,46 @@ void CSnowStage::Update()
 		m_RainVolParams = rainVolParams;
 		m_SnowVolParams = snowVolParams;
 	}
+}
+
+void CSnowStage::ResizeResource(int resourceWidth, int resourceHeight)
+{
+	const uint32 flags = FT_NOMIPS | FT_DONT_STREAM | FT_USAGE_RENDERTARGET;
+
+	m_pSnowDisplacementTex = CTexture::GetOrCreateTextureObjectPtr("$SnowDisplacement", resourceWidth, resourceHeight, 1, eTT_2D, flags, eTF_R8);
+	if (m_pSnowDisplacementTex)
+	{
+		const bool shouldApplyDisplacement = (CRenderer::CV_r_snow > 0) && (CRenderer::CV_r_snow_displacement > 0);
+
+		// Create/release the displacement texture on demand
+		if (!shouldApplyDisplacement && CTexture::IsTextureExist(m_pSnowDisplacementTex))
+			m_pSnowDisplacementTex->ReleaseDeviceTexture(false);
+		else if (shouldApplyDisplacement && (m_pSnowDisplacementTex->Invalidate(resourceWidth, resourceHeight, eTF_R8G8B8A8) || !CTexture::IsTextureExist(m_pSnowDisplacementTex)))
+			m_pSnowDisplacementTex->CreateRenderTarget(eTF_R8G8B8A8, Clr_Transparent);
+	}
+}
+
+void CSnowStage::Resize(int renderWidth, int renderHeight)
+{
+#if defined(VOLUMETRIC_FOG_SHADOWS)
+	ResizeResource(renderWidth, renderHeight);
+#endif
+}
+
+void CSnowStage::OnCVarsChanged(const CCVarUpdateRecorder& cvarUpdater)
+{
+#if defined(VOLUMETRIC_FOG_SHADOWS)
+	auto pVar1 = cvarUpdater.GetCVar("r_snow");
+	auto pVar2 = cvarUpdater.GetCVar("r_snow_displacement");
+	if (pVar1 || pVar2)
+	{
+		const CRenderView* pRenderView = RenderView();
+		const int32 renderWidth  = pRenderView->GetRenderResolution()[0];
+		const int32 renderHeight = pRenderView->GetRenderResolution()[1];
+
+		ResizeResource(renderWidth, renderHeight);
+	}
+#endif
 }
 
 void CSnowStage::ExecuteDeferredSnowGBuffer()
@@ -126,12 +148,11 @@ void CSnowStage::ExecuteDeferredSnowGBuffer()
 	rtMask |= (rainVolParams.bApplyOcclusion) ? g_HWSR_MaskBit[HWSR_SAMPLE0] : 0;
 
 	CTexture* pOcclusionTex = (rainVolParams.bApplyOcclusion) ? CRendererResources::s_ptexRainOcclusion : CRendererResources::s_ptexBlack;
+	CTexture* zTarget = pRenderView->GetDepthTarget();
 
 	auto& pass = m_passDeferredSnowGBuffer;
 
-	if (pass.InputChanged(rtMask,
-	                      CRenderer::CV_r_snow_displacement,
-	                      m_pSnowDisplacementTex->GetID()))
+	if (pass.IsDirty(rtMask, CRenderer::CV_r_snow_displacement, pOcclusionTex->GetID()))
 	{
 		static CCryNameTSCRC techName("Snow");
 		pass.SetPrimitiveFlags(CRenderPrimitive::eFlags_ReflectShaderConstants_PS);
@@ -139,9 +160,9 @@ void CSnowStage::ExecuteDeferredSnowGBuffer()
 		pass.SetTechnique(CShaderMan::s_ShaderDeferredSnow, techName, rtMask);
 
 		const int32 stencilState = STENC_FUNC(FSS_STENCFUNC_EQUAL) |
-		                           STENCOP_FAIL(FSS_STENCOP_KEEP) |
-		                           STENCOP_ZFAIL(FSS_STENCOP_KEEP) |
-		                           STENCOP_PASS(FSS_STENCOP_KEEP);
+			STENCOP_FAIL(FSS_STENCOP_KEEP) |
+			STENCOP_ZFAIL(FSS_STENCOP_KEEP) |
+			STENCOP_PASS(FSS_STENCOP_KEEP);
 		const uint8 stencilRef = BIT_STENCIL_RESERVED;
 		const uint8 stencilReadMask = BIT_STENCIL_RESERVED;
 		pass.SetStencilState(stencilState, stencilRef, stencilReadMask, 0xFF);
@@ -150,7 +171,7 @@ void CSnowStage::ExecuteDeferredSnowGBuffer()
 		pass.SetRenderTarget(0, CRendererResources::s_ptexSceneNormalsMap);
 		pass.SetRenderTarget(1, CRendererResources::s_ptexSceneDiffuse);
 		pass.SetRenderTarget(2, CRendererResources__s_ptexSceneSpecular);
-		pass.SetDepthTarget(RenderView()->GetDepthTarget());
+		pass.SetDepthTarget(zTarget);
 
 		if (CRenderer::CV_r_snow_displacement)
 		{
@@ -288,7 +309,7 @@ void CSnowStage::ExecuteDeferredSnowDisplacement()
 
 		auto& pass = m_passParallaxSnowHeightMapGen;
 
-		if (pass.InputChanged(m_pSnowDisplacementTex->GetID()))
+		if (pass.IsDirty())
 		{
 			static CCryNameTSCRC techName = "ParallaxMapPrepass";
 			pass.SetPrimitiveFlags(CRenderPrimitive::eFlags_ReflectShaderConstants_PS);
@@ -320,7 +341,7 @@ void CSnowStage::ExecuteDeferredSnowDisplacement()
 	{
 		auto& pass = m_passParallaxSnowMin;
 
-		if (pass.InputChanged())
+		if (pass.IsDirty())
 		{
 			static CCryNameTSCRC techName = "ParallaxMapMin";
 			pass.SetTechnique(CShaderMan::s_ShaderDeferredSnow, techName, 0);
@@ -359,7 +380,7 @@ void CSnowStage::ExecuteDeferredSnowDisplacement()
 		{
 			auto& pass = m_passParallaxSnow[0];
 
-			if (pass.InputChanged())
+			if (pass.IsDirty())
 			{
 				pass.SetPrimitiveFlags(CRenderPrimitive::eFlags_ReflectShaderConstants_PS);
 				pass.SetPrimitiveType(CRenderPrimitive::ePrim_ProceduralTriangle);
@@ -392,7 +413,7 @@ void CSnowStage::ExecuteDeferredSnowDisplacement()
 		{
 			auto& pass = m_passParallaxSnow[1];
 
-			if (pass.InputChanged())
+			if (pass.IsDirty())
 			{
 				pass.SetPrimitiveFlags(CRenderPrimitive::eFlags_ReflectShaderConstants_PS);
 				pass.SetPrimitiveType(CRenderPrimitive::ePrim_ProceduralTriangle);
@@ -425,7 +446,7 @@ void CSnowStage::ExecuteDeferredSnowDisplacement()
 		{
 			auto& pass = m_passParallaxSnow[2];
 
-			if (pass.InputChanged())
+			if (pass.IsDirty())
 			{
 				uint64 rtMask = g_HWSR_MaskBit[HWSR_SAMPLE0];
 				pass.SetPrimitiveFlags(CRenderPrimitive::eFlags_ReflectShaderConstants_PS);
@@ -601,7 +622,7 @@ void CSnowStage::CreateSnowClusters()
 
 			cluster.m_pPrimitive = stl::make_unique<CRenderPrimitive>();
 
-			cluster.m_pPrimitive->AllocateTypedConstantBuffer(eConstantBufferShaderSlot_PerBatch, sizeof(SSnowClusterCB), EShaderStage_Vertex | EShaderStage_Pixel);
+			cluster.m_pPrimitive->AllocateTypedConstantBuffer(eConstantBufferShaderSlot_PerPrimitive, sizeof(SSnowClusterCB), EShaderStage_Vertex | EShaderStage_Pixel);
 		}
 
 		m_nNumClusters = numClusters;
@@ -778,7 +799,7 @@ void CSnowStage::RenderSnowClusters()
 		// update constant buffer
 		{
 
-			auto constants = pPrim->GetConstantManager().BeginTypedConstantUpdate<SSnowClusterCB>(eConstantBufferShaderSlot_PerBatch, EShaderStage_Vertex | EShaderStage_Pixel);
+			auto constants = pPrim->GetConstantManager().BeginTypedConstantUpdate<SSnowClusterCB>(eConstantBufferShaderSlot_PerPrimitive, EShaderStage_Vertex | EShaderStage_Pixel);
 
 			constants->vWaterLevel = vWaterLevel;
 			constants->vSnowFlakeParams = vSnowFlakeParams;
@@ -806,7 +827,7 @@ void CSnowStage::ExecuteHalfResComposite()
 
 	auto& pass = m_passSnowHalfResCompisite;
 
-	if (pass.InputChanged())
+	if (pass.IsDirty())
 	{
 		static CCryNameTSCRC techName = "SnowHalfResComposite";
 		pass.SetPrimitiveFlags(CRenderPrimitive::eFlags_None);

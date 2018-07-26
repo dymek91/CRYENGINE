@@ -122,6 +122,7 @@ struct SFunctor;
 struct IScaleformHelper;
 struct IProjectManager;
 class IImeManager;
+struct SDisplayContextKey;
 
 class CBootProfilerRecord;
 
@@ -1369,7 +1370,7 @@ struct ISystem
 	virtual void                         SetViewCamera(CCamera& Camera) = 0;
 	//! Gets the camera that will be used for main rendering next frame
 	//! Note that the camera might be overridden by user code, and is only considered final after Cry::IEnginePlugin::UpdateBeforeFinalizeCamera has been executed.
-	virtual CCamera&                     GetViewCamera() = 0;
+	virtual const CCamera&               GetViewCamera() const = 0;
 
 	//! When ignore update sets to true, system will ignore and updates and render calls.
 	virtual void IgnoreUpdates(bool bIgnore) = 0;

@@ -207,9 +207,7 @@ int CShader::mfSize()
 	nSize += m_NameShader.capacity();
 	nSize += m_HWTechniques.GetMemoryUsage();
 	for (i = 0; i < m_HWTechniques.Num(); i++)
-	{
 		nSize += m_HWTechniques[i]->Size();
-	}
 
 	return nSize;
 }
@@ -404,32 +402,39 @@ SShaderTechnique* CShader::GetTechnique(int nStartTechnique, int nRequestedTechn
 #if CRY_PLATFORM_DESKTOP
 void CShader::mfFlushCache()
 {
-	uint32 n, m;
-
 	mfFlushPendedShaders();
 
 	if (SEmptyCombination::s_Combinations.size())
 	{
 		// Flush the cache before storing any empty combinations
 		CHWShader::mfFlushPendedShadersWait(-1);
-		for (m = 0; m < SEmptyCombination::s_Combinations.size(); m++)
+		for (uint32_t m = 0; m < SEmptyCombination::s_Combinations.size(); m++)
 		{
 			SEmptyCombination& Comb = SEmptyCombination::s_Combinations[m];
-			Comb.pShader->mfStoreEmptyCombination(this, Comb);
+			Comb.pShader->mfStoreEmptyCombination(Comb);
 		}
 		SEmptyCombination::s_Combinations.clear();
 	}
 
-	for (m = 0; m < m_HWTechniques.Num(); m++)
+	for (auto& pTech : m_HWTechniques)
 	{
-		SShaderTechnique* pTech = m_HWTechniques[m];
-		for (n = 0; n < pTech->m_Passes.Num(); n++)
+		for (auto& techPass : pTech->m_Passes)
 		{
-			SShaderPass* pPass = &pTech->m_Passes[n];
-			if (pPass->m_PShader)
-				pPass->m_PShader->mfFlushCacheFile();
-			if (pPass->m_VShader)
-				pPass->m_VShader->mfFlushCacheFile();
+			CHWShader* shaders[] =
+			{
+				techPass.m_VShader,
+				techPass.m_PShader,
+				techPass.m_GShader,
+				techPass.m_DShader,
+				techPass.m_HShader,
+				techPass.m_CShader
+			};
+
+			for (const auto& pShader : shaders)
+			{
+				if (pShader)
+					pShader->mfFlushCacheFile();
+			}
 		}
 	}
 }
@@ -934,15 +939,15 @@ void CShaderMan::mfInitCommonGlobalFlags(void)
 
 void CShaderMan::mfInitLookups()
 {
-	m_ResLookupDataMan[CACHE_READONLY].Clear();
+	m_ResLookupDataMan[static_cast<int>(cacheSource::readonly)].Clear();
 	string dirdatafilename("%ENGINE%/" + string(m_ShadersCache));
 	dirdatafilename += "lookupdata.bin";
-	m_ResLookupDataMan[CACHE_READONLY].LoadData(dirdatafilename.c_str(), CParserBin::m_bEndians, true);
+	m_ResLookupDataMan[static_cast<int>(cacheSource::readonly)].LoadData(dirdatafilename.c_str(), CParserBin::m_bEndians, true);
 
-	m_ResLookupDataMan[CACHE_USER].Clear();
+	m_ResLookupDataMan[static_cast<int>(cacheSource::user)].Clear();
 	dirdatafilename = m_szUserPath + string(m_ShadersCache);
 	dirdatafilename += "lookupdata.bin";
-	m_ResLookupDataMan[CACHE_USER].LoadData(dirdatafilename.c_str(), CParserBin::m_bEndians, false);
+	m_ResLookupDataMan[static_cast<int>(cacheSource::user)].LoadData(dirdatafilename.c_str(), CParserBin::m_bEndians, false);
 }
 
 void CShaderMan::mfInitGlobal(void)
@@ -1039,6 +1044,8 @@ void CShaderMan::mfInitGlobal(void)
 				g_HWSR_MaskBit[HWSR_SAMPLE4] = gb->m_Mask;
 			else if (gb->m_ParamName == "%_RT_SAMPLE5")
 				g_HWSR_MaskBit[HWSR_SAMPLE5] = gb->m_Mask;
+			else if (gb->m_ParamName == "%_RT_SAMPLE6")
+				g_HWSR_MaskBit[HWSR_SAMPLE6] = gb->m_Mask;
 			else if (gb->m_ParamName == "%_RT_ANIM_BLEND")
 				g_HWSR_MaskBit[HWSR_ANIM_BLEND] = gb->m_Mask;
 			else if (gb->m_ParamName == "%_RT_MOTION_BLUR")
@@ -1210,6 +1217,8 @@ void CShaderMan::mfPostInit()
 	{
 		mfLoadDefaultSystemShaders();
 	}
+
+	gRenDev->m_pRT->FlushAndWait(); // TODO: Remove as soon as DeviceTexture's FlushAndWait is removed
 }
 
 void CShaderMan::OnSystemEvent(ESystemEvent event, UINT_PTR wparam, UINT_PTR lparam)
@@ -1339,6 +1348,8 @@ const SShaderProfile& CRenderer::GetShaderProfile(EShaderType eST) const
 
 void CShaderMan::RT_SetShaderQuality(EShaderType eST, EShaderQuality eSQ)
 {
+	CRY_PROFILE_REGION(PROFILE_RENDERER, "CShaderMan::RT_SetShaderQuality");
+
 	eSQ = CLAMP(eSQ, eSQ_Low, eSQ_VeryHigh);
 	if (eST == eST_All)
 	{
@@ -1795,7 +1806,6 @@ void CShaderResources::CreateModifiers(SInputShaderResources* pInRes)
 				pMod->m_eTGType = ETG_Stream;
 			if (pMod->m_eRotType >= ETMR_Max)
 				pMod->m_eRotType = ETMR_NoChange;
-
 			if (pMod->m_eTGType != ETG_Stream)
 			{
 				m_ResFlags |= MTL_FLAG_NOTINSTANCED;
@@ -2530,14 +2540,6 @@ void CShaderMan::mfBeginFrame()
 
 void CHWShader::mfCleanupCache()
 {
-	FXShaderCacheItor FXitor;
-	for (FXitor = m_ShaderCache.begin(); FXitor != m_ShaderCache.end(); FXitor++)
-	{
-		SShaderCache* sc = FXitor->second;
-		if (!sc)
-			continue;
-		sc->Cleanup();
-	}
 	assert(CResFile::m_nNumOpenResources == 0);
 	CResFile::m_nMaxOpenResFiles = 4;
 }

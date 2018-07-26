@@ -3159,16 +3159,6 @@ bool CSystem::Initialize(SSystemInitParams& startupParams)
 				m_rDriver->Set(STR_DX11_RENDERER);
 			}
 		}
-
-		if (m_env.IsEditor())
-		{
-			if (!(stricmp(m_rDriver->GetString(), STR_DX11_RENDERER) == 0 ||
-			      stricmp(m_rDriver->GetString(), STR_DX12_RENDERER) == 0))
-			{
-				m_env.pLog->LogWarning("Editor only supports DX11 & DX12. Switching to DX11 Renderer.");
-				m_rDriver->Set(STR_DX11_RENDERER);
-			}
-		}
 #endif
 
 #if CRY_PLATFORM_WINDOWS
@@ -5135,10 +5125,10 @@ void CSystem::CreateSystemVars()
 	                                         "0: Disable the profiler\n"
 	                                         "1: Show the full profiler\n"
 	                                         "2: Show only the execution graph\n");
-#if CRY_PLATFORM_WINDOWS || CRY_PLATFORM_DURANGO
-	const uint32 nJobSystemDefaultCoreNumber = 8;
-#else
+#if CRY_PLATFORM_CONSOLE || CRY_PLATFORM_MOBILE
 	const uint32 nJobSystemDefaultCoreNumber = 4;
+#else
+	const uint32 nJobSystemDefaultCoreNumber = 8;
 #endif
 	m_sys_job_system_max_worker = REGISTER_INT("sys_job_system_max_worker", nJobSystemDefaultCoreNumber, 0,
 	                                           "Sets the number of threads to use for the job system"
@@ -5249,19 +5239,7 @@ void CSystem::CreateSystemVars()
 	               "sets the base port for the simple http server to run on, defaults to 1880");
 #endif
 
-#if defined DEDICATED_SERVER
-	const int DEFAULT_DUMP_TYPE = 3;
-#else
-	const int DEFAULT_DUMP_TYPE = 2;
-#endif
 
-	REGISTER_CVAR2("sys_dump_type", &g_cvars.sys_dump_type, DEFAULT_DUMP_TYPE, VF_NULL,
-	               "Specifies type of crash dump to create - see MINIDUMP_TYPE in dbghelp.h for full list of values\n"
-	               "0: Do not create a minidump\n"
-	               "1: Create a small minidump (stacktrace)\n"
-	               "2: Create a medium minidump (+ some variables)\n"
-	               "3: Create a full minidump (+ all memory)\n"
-	               );
 	REGISTER_CVAR2("sys_dump_aux_threads", &g_cvars.sys_dump_aux_threads, 1, VF_NULL, "Dumps callstacks of other threads in case of a crash");
 	REGISTER_CVAR2("sys_keyboard_break", &g_cvars.sys_keyboard_break, 0, VF_NULL, "Enables keyboard break handler");
 

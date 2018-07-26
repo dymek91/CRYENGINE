@@ -13,27 +13,15 @@
 #include <CryInput/IHardwareMouse.h>
 #include <Common/RenderDisplayContext.h>
 
-#define CRY_AMD_AGS_USE_DLL
-#include <CryCore/Platform/CryLibrary.h>
-
 #if CRY_PLATFORM_WINDOWS
 	#if defined(USE_AMD_API)
-		#if !defined(CRY_AMD_AGS_USE_DLL) // Set to 0 to load DLL at runtime, you need to redist amd_ags(64).dll yourself
-			#if CRY_PLATFORM_64BIT
-LINK_THIRD_PARTY_LIBRARY("SDKs/AMD/AGS Lib/lib/x64/static/amd_ags64.lib")
-			#else
-LINK_THIRD_PARTY_LIBRARY("SDKs/AMD/AGS Lib/lib/Win32/static/amd_ags.lib")
-			#endif
-		#else
-			#define _AMD_AGS_USE_DLL
-		#endif
-		#ifndef LoadLibrary
-			#define LoadLibrary CryLoadLibrary
-			#include <AMD/AGS Lib/inc/amd_ags.h>
-			#undef LoadLibrary
-		#else
-			#include <AMD/AGS Lib/inc/amd_ags.h>
-		#endif                              //LoadLibrary
+		#include AMD_API_HEADER
+LINK_THIRD_PARTY_LIBRARY(AMD_API_LIB)
+
+		AGSContext* g_pAGSContext = nullptr;
+		AGSConfiguration g_pAGSContextConfiguration = {};
+		AGSGPUInfo g_gpuInfo;
+		unsigned int g_extensionsSupported = 0;
 	#endif
 
 	#if defined(USE_NV_API)
@@ -44,9 +32,9 @@ LINK_THIRD_PARTY_LIBRARY(NV_API_LIB)
 	#if defined(USE_AMD_EXT)
 		#include <AMD/AMD_Extensions/AmdDxExtDepthBoundsApi.h>
 
-bool g_bDepthBoundsTest = true;
-IAmdDxExt* g_pExtension = NULL;
-IAmdDxExtDepthBounds* g_pDepthBoundsTest = NULL;
+		bool g_bDepthBoundsTest = true;
+		IAmdDxExt* g_pExtension = NULL;
+		IAmdDxExtDepthBounds* g_pDepthBoundsTest = NULL;
 	#endif
 #endif
 
@@ -546,7 +534,7 @@ int CD3D9Renderer::EnumDisplayFormats(SDispFormat* formats)
 
 	auto* pDC = gcpRendD3D->GetActiveDisplayContext();
 	auto* swapDC = pDC->IsSwapChainBacked() ? static_cast<CSwapChainBackedRenderDisplayContext*>(pDC) : gcpRendD3D->GetBaseDisplayContext();
-	const DXGI_SURFACE_DESC& swapChainDesc = swapDC->GetSwapChain().GetSwapChainDesc();
+	const DXGI_SURFACE_DESC& swapChainDesc = swapDC->GetSwapChain().GetSurfaceDesc();
 
 	unsigned int numModes = 0;
 	if (SUCCEEDED(swapDC->m_pOutput->GetDisplayModeList(swapChainDesc.Format, 0, &numModes, 0)) && numModes)
@@ -834,7 +822,6 @@ void CD3D9Renderer::RT_ShutDown(uint32 nFlags)
 	GetDeviceObjectFactory().ReleaseInputLayouts();
 	GetDeviceObjectFactory().ReleaseSamplerStates();
 	GetDeviceObjectFactory().ReleaseNullResources();
-	GetDeviceObjectFactory().ReleaseFrameFences();
 
 #if defined(SUPPORT_DEVICE_INFO)
 	//m_devInfo.Release();
@@ -1089,7 +1076,9 @@ bool CD3D9Renderer::SetWindow(int width, int height)
 			SetForegroundWindow(m_hWnd);
 		}
 	}
+#endif
 
+#if CRY_PLATFORM_WINDOWS || CRY_PLATFORM_ANDROID || CRY_PLATFORM_LINUX
 	m_VSync = !IsEditorMode() ? CV_r_vsync : 0;
 
 	// Update base context hWnd and key
@@ -1638,37 +1627,22 @@ iLog->Log(" %s shader quality: %s", # name, sGetSQuality("q_Shader" # name)); } 
 }
 
 //==========================================================================
-
 void CD3D9Renderer::InitAMDAPI()
 {
 #if USE_AMD_API
 	do
 	{
-		AGSReturnCode status = AGSInit();
+		AGSReturnCode status = g_pAGSContext ? AGS_SUCCESS : agsInit(&g_pAGSContext, &g_pAGSContextConfiguration, &g_gpuInfo);
 		iLog->Log("AGS: AMD GPU Services API init %s (%d)", status == AGS_SUCCESS ? "ok" : "failed", status);
 		m_bVendorLibInitialized = status == AGS_SUCCESS;
 		if (!m_bVendorLibInitialized)
 			break;
-
-		AGSDriverVersionInfoStruct driverInfo = { 0 };
-		status = AGSDriverGetVersionInfo(&driverInfo);
-
-		if (status != AGS_SUCCESS)
-			iLog->LogError("AGS: Unable to get driver version (%d)", status);
-		else
-			iLog->Log("AGS: Catalyst Version: %s  Driver Version: %s", driverInfo.strCatalystVersion, driverInfo.strDriverVersion);
-
-		int outputIndex = 0;
-	#if defined(SUPPORT_DEVICE_INFO)
-		outputIndex = (int)m_devInfo.OutputIndex();
-	#else
-		if (AGSGetDefaultDisplayIndex(&outputIndex) != AGS_SUCCESS)
-			outputIndex = 0;
-	#endif
+		
+		iLog->Log("AGS: Catalyst Version: %s  Driver Version: %s", g_gpuInfo.radeonSoftwareVersion, g_gpuInfo.driverVersion);
 
 		m_nGPUs = 1;
 		int numGPUs = 1;
-		status = AGSCrossfireGetGPUCount(outputIndex, &numGPUs);
+		status = agsGetCrossfireGPUCount(g_pAGSContext, &numGPUs);
 
 		if (status != AGS_SUCCESS)
 		{
@@ -1679,6 +1653,8 @@ void CD3D9Renderer::InitAMDAPI()
 			m_nGPUs = numGPUs;
 			iLog->Log("AGS: Multi GPU count = %d", numGPUs);
 		}
+		
+		m_bDeviceSupports_AMDExt = g_extensionsSupported;
 	}
 	while (0);
 #endif   // USE_AMD_API
@@ -1842,12 +1818,6 @@ bool CD3D9Renderer::CreateDeviceDurango()
 #if (CRY_RENDERER_DIRECT3D >= 120)
 			pD3D12Device = (pDX12Device = reinterpret_cast<CCryDX12Device*>(pD3D11Device))->GetD3D12Device();
 #endif
-			{
-				DXGIDevice* pDXGIDevice = 0;
-				if (SUCCEEDED(pD3D11Device->QueryInterface(__uuidof(DXGIDevice), (void**)&pDXGIDevice)) && pDXGIDevice)
-					pDXGIDevice->SetMaximumFrameLatency(MAX_FRAME_LATENCY);
-				SAFE_RELEASE(pDXGIDevice);
-			}
 		}
 	}
 
@@ -1934,7 +1904,7 @@ bool CD3D9Renderer::CreateDeviceMobile()
 {
 	auto* pDC = GetBaseDisplayContext();
 
-	if (!m_devInfo.CreateDevice(false, pDC->GetDisplayResolution().x, pDC->GetDisplayResolution().y, m_zbpp, OnD3D11CreateDevice, CreateWindowCallback))
+	if (!m_devInfo.CreateDevice(m_zbpp, OnD3D11CreateDevice, CreateWindowCallback))
 		return false;
 
 	OnD3D11PostCreateDevice(m_devInfo.Device());
@@ -2063,6 +2033,10 @@ bool CD3D9Renderer::CreateDevice()
 	return true;
 }
 
+#if (CRY_RENDERER_DIRECT3D >= 110) && NTDDI_WIN10 && (WDK_NTDDI_VERSION >= NTDDI_WIN10) && defined(SUPPORT_DEVICE_INFO)
+	#include "dxgi1_4.h"
+#endif
+
 void CD3D9Renderer::GetVideoMemoryUsageStats(size_t& vidMemUsedThisFrame, size_t& vidMemUsedRecently, bool bGetPoolsSizes)
 {
 
@@ -2072,20 +2046,33 @@ void CD3D9Renderer::GetVideoMemoryUsageStats(size_t& vidMemUsedThisFrame, size_t
 	}
 	else
 	{
-#if (CRY_RENDERER_DIRECT3D >= 120) && defined(SUPPORT_DEVICE_INFO)
+#if (CRY_RENDERER_DIRECT3D >= 110) && NTDDI_WIN10 && (WDK_NTDDI_VERSION >= NTDDI_WIN10) && defined(SUPPORT_DEVICE_INFO)
 		CD3D9Renderer* rd = gcpRendD3D;
-		DXGI_QUERY_VIDEO_MEMORY_INFO videoMemoryInfoA;
-		DXGI_QUERY_VIDEO_MEMORY_INFO videoMemoryInfoB;
+		IDXGIAdapter3* pAdapter = nullptr;
 
-		rd->m_devInfo.Adapter()->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &videoMemoryInfoA);
-		rd->m_devInfo.Adapter()->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL, &videoMemoryInfoB);
+	#if (CRY_RENDERER_DIRECT3D >= 120)
+		pAdapter = rd->m_devInfo.Adapter();
+		pAdapter->AddRef();
+	#else
+		rd->m_devInfo.Adapter()->QueryInterface(__uuidof(IDXGIAdapter3), (void**)&pAdapter);
+	#endif
+
+		DXGI_QUERY_VIDEO_MEMORY_INFO videoMemoryInfoA = {};
+		DXGI_QUERY_VIDEO_MEMORY_INFO videoMemoryInfoB = {};
+
+		if (pAdapter)
+		{
+			pAdapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &videoMemoryInfoA);
+			pAdapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL, &videoMemoryInfoB);
+			pAdapter->Release();
+		}
+#else
+		struct { SIZE_T CurrentUsage; } videoMemoryInfoA = {};
+		struct { SIZE_T CurrentUsage; } videoMemoryInfoB = {};
+#endif
 
 		vidMemUsedThisFrame = size_t(videoMemoryInfoA.CurrentUsage);
 		vidMemUsedRecently = 0;
-#else
-		assert("CD3D9Renderer::GetVideoMemoryUsageStats() not implemented for this platform yet!");
-		vidMemUsedThisFrame = vidMemUsedRecently = 0;
-#endif
 	}
 }
 
@@ -2256,7 +2243,6 @@ HRESULT CALLBACK CD3D9Renderer::OnD3D11PostCreateDevice(D3DDevice* pd3dDevice)
 	pDC->m_nSSSamplesX = CV_r_Supersampling;
 	pDC->m_nSSSamplesY = CV_r_Supersampling;
 	pDC->m_bMainViewport = true;
-	pDC->SetBackBufferCount(MAX_FRAME_LATENCY + 1);
 
 #if DX11_WRAPPABLE_INTERFACE && CAPTURE_REPLAY_LOG
 	rd->MemReplayWrapD3DDevice();
@@ -2270,7 +2256,7 @@ HRESULT CALLBACK CD3D9Renderer::OnD3D11PostCreateDevice(D3DDevice* pd3dDevice)
 	pDC->ChangeDisplayResolution(displayWidth, displayHeight);
 
 	// Copy swap chain surface desc back to global var
-	rd->m_d3dsdBackBuffer = pDC->GetSwapChain().GetSwapChainDesc();
+	rd->m_d3dsdBackBuffer = pDC->GetSwapChain().GetSurfaceDesc();
 
 	rd->ReleaseAuxiliaryMeshes();
 	rd->CreateAuxiliaryMeshes();

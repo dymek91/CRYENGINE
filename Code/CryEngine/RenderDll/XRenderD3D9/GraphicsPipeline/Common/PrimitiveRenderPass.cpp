@@ -49,10 +49,9 @@ CRenderPrimitive::SPrimitiveGeometry::SPrimitiveGeometry()
 	, vertexBaseOffset(0)
 	, vertexOrIndexCount(0)
 	, vertexOrIndexOffset(0)
+	, indexStream()
+	, vertexStream()
 {
-	SStreamInfo emptyStream = { ~0u, 0, 0 };
-	vertexStream = emptyStream;
-	indexStream = emptyStream;
 }
 
 CRenderPrimitive::CRenderPrimitive(CRenderPrimitive&& other)
@@ -663,7 +662,7 @@ void CPrimitiveRenderPass::Execute()
 
 	if (m_clearMask & CPrimitiveRenderPass::eClear_Stencil)
 	{
-		CClearSurfacePass::Execute(GetDepthTarget(), CLEAR_STENCIL, Clr_Unused.r, 0);
+		CClearSurfacePass::Execute(GetDepthTarget(), CLEAR_STENCIL, Clr_Unused.r, Val_Stencil);
 	}
 	if (m_clearMask & CPrimitiveRenderPass::eClear_Color0)
 	{

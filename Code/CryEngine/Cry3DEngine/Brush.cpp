@@ -112,7 +112,7 @@ CLodValue CBrush::ComputeLod(int wantedLod, const SRenderingPassInfo& passInfo)
 		nLodA = CLAMP(wantedLod, pStatObj->GetMinUsableLod(), (int)pStatObj->m_nMaxUsableLod);
 
 		if (!(pStatObj->m_nFlags & STATIC_OBJECT_COMPOUND))
-			nLodA = pStatObj->FindNearesLoadedLOD(nLodA, true);
+			nLodA = pStatObj->FindNearestLoadedLOD(nLodA, true);
 	}
 
 	return CLodValue(nLodA, 0, -1);
@@ -805,7 +805,9 @@ void CBrush::Render(const CLodValue& lodValue, const SRenderingPassInfo& passInf
 	   }
 	 */
 
+	const uint8 nMaterialLayers = IRenderNode::GetMaterialLayers();
 	Matrix34 transformMatrix = m_Matrix;
+	const Vec3 vCamPos = passInfo.GetCamera().GetPosition();
 	bool isNearestObject = (GetRndFlags() & ERF_FOB_NEAREST) != 0;
 	if (isNearestObject)
 	{
@@ -838,16 +840,25 @@ void CBrush::Render(const CLodValue& lodValue, const SRenderingPassInfo& passInf
 	if (!pObj)
 	{
 		if (GetObjManager()->AddOrCreatePersistentRenderObject(pTempData, pObj, &lodValue, transformMatrix, passInfo))
+		{
+			if (pObj && !passInfo.IsShadowPass())
+			{
+ 				pObj->m_fDistance = sqrt_tpl(Distance::Point_AABBSq(vCamPos, CBrush::GetBBox())) * passInfo.GetZoomFactor();
+				IF(!m_bDrawLast, 1)
+					pObj->m_nSort = fastround_positive(pObj->m_fDistance * 2.0f);
+				else
+					pObj->m_fSort = 10000.0f;
+			}
 			return;
+		}
 	}
 
 	const auto& userData = pTempData->userData;
 
-	const Vec3 vCamPos = passInfo.GetCamera().GetPosition();
 	const Vec3 vObjCenter = CBrush::GetBBox().GetCenter();
 	const Vec3 vObjPos = CBrush::GetPos();
 
-	pObj->m_fDistance = pObj->m_bPermanent ? 0 : sqrt_tpl(Distance::Point_AABBSq(vCamPos, CBrush::GetBBox())) * passInfo.GetZoomFactor();
+	pObj->m_fDistance = sqrt_tpl(Distance::Point_AABBSq(vCamPos, CBrush::GetBBox())) * passInfo.GetZoomFactor();
 
 	pObj->m_pRenderNode = this;
 	pObj->m_fAlpha = 1.f;
@@ -872,7 +883,7 @@ void CBrush::Render(const CLodValue& lodValue, const SRenderingPassInfo& passInf
 		pObj->m_ObjFlags |= FOB_HUD_REQUIRE_DEPTHTEST;
 	}
 
-	if (uint8 nMaterialLayers = IRenderNode::GetMaterialLayers())
+	if (nMaterialLayers)
 	{
 		uint8 nFrozenLayer = (nMaterialLayers & MTL_LAYER_FROZEN) ? MTL_LAYER_FROZEN_MASK : 0;
 		uint8 nWetLayer = (nMaterialLayers & MTL_LAYER_WET) ? MTL_LAYER_WET_MASK : 0;
@@ -944,19 +955,15 @@ void CBrush::Render(const CLodValue& lodValue, const SRenderingPassInfo& passInf
 	else
 		pObj->m_ObjFlags &= ~FOB_AFTER_WATER;
 
-	if (GetRndFlags() & ERF_RECVWIND)
+	if ((GetRndFlags() & ERF_RECVWIND) && GetCVars()->e_VegetationBending)
 	{
-		if (GetCVars()->e_VegetationBending)
-		{
-			pObj->m_vegetationBendingData.scale = 0.1f; // this is default value for vegetation if bending in veg group is set to 1
-			pObj->m_vegetationBendingData.verticalRadius = m_pStatObj->m_fRadiusVert;
-			pObj->m_ObjFlags |= FOB_BENDED | FOB_DYNAMIC_OBJECT;
-		}
-		else
-		{
-			pObj->m_vegetationBendingData.scale = 0.0f;
-			pObj->m_vegetationBendingData.verticalRadius = 0.0f;
-		}
+		// this is default value for vegetation if bending in veg group is set to 1
+		pObj->SetBendingData({ 0.1f, m_pStatObj->m_fRadiusVert }, passInfo);
+		pObj->m_ObjFlags |= FOB_BENDED | FOB_DYNAMIC_OBJECT;
+	}
+	else
+	{
+		pObj->SetBendingData({ 0.0f, 0.0f }, passInfo);
 	}
 
 	//IFoliage* pFoliage = GetFoliage(-1);

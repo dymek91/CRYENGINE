@@ -31,7 +31,7 @@ bool CD3D9Renderer::RT_CreateDevice()
 	return CreateDevice();
 }
 
-void CD3D9Renderer::RT_FlashRenderInternal(IFlashPlayer* pPlayer)
+void CD3D9Renderer::RT_FlashRenderInternal(std::shared_ptr<IFlashPlayer> &&pPlayer)
 {
 	FUNCTION_PROFILER_RENDERER();
 
@@ -55,9 +55,12 @@ void CD3D9Renderer::RT_FlashRenderInternal(IFlashPlayer* pPlayer)
 	}
 
 	SetProfileMarker("FLASH_RENDERING", CRenderer::ESPM_POP);
+
+	if (CRendererCVars::CV_r_FlushToGPU >= 1)
+		GetDeviceObjectFactory().FlushToGPU();
 }
 
-void CD3D9Renderer::RT_FlashRenderInternal(IFlashPlayer_RenderProxy* pPlayer, bool bDoRealRender)
+void CD3D9Renderer::RT_FlashRenderInternal(std::shared_ptr<IFlashPlayer_RenderProxy> &&pPlayer, bool bDoRealRender)
 {
 	FUNCTION_PROFILER_RENDERER();
 
@@ -73,19 +76,19 @@ void CD3D9Renderer::RT_FlashRenderInternal(IFlashPlayer_RenderProxy* pPlayer, bo
 			if (GetS3DRend().IsQuadLayerEnabled())
 			{
 				auto quadRenderScope = GetS3DRend().PrepareRenderingToVrQuadLayer(RenderLayer::eQuadLayers_0);
-				pPlayer->RenderCallback(IFlashPlayer_RenderProxy::EFT_Mono, !renderToScreen);
+				pPlayer->RenderCallback(IFlashPlayer_RenderProxy::EFT_Mono);
 			}
 			else
 			{
 				{
 					auto eyeRenderScope = GetS3DRend().PrepareRenderingToEye(CCamera::eEye_Left);
-					pPlayer->RenderCallback(IFlashPlayer_RenderProxy::EFT_StereoLeft, false);
+					pPlayer->RenderCallback(IFlashPlayer_RenderProxy::EFT_StereoLeft);
 				}
 
 				if (GetS3DRend().RequiresSequentialSubmission())
 				{
 					auto eyeRenderScope = GetS3DRend().PrepareRenderingToEye(CCamera::eEye_Right);
-					pPlayer->RenderCallback(IFlashPlayer_RenderProxy::EFT_StereoRight, !renderToScreen);
+					pPlayer->RenderCallback(IFlashPlayer_RenderProxy::EFT_StereoRight);
 				}
 			}
 		}
@@ -99,11 +102,14 @@ void CD3D9Renderer::RT_FlashRenderInternal(IFlashPlayer_RenderProxy* pPlayer, bo
 	}
 	else
 	{
-		pPlayer->DummyRenderCallback(IFlashPlayer_RenderProxy::EFT_Mono, true);
+		pPlayer->DummyRenderCallback(IFlashPlayer_RenderProxy::EFT_Mono);
 	}
+
+	if (CRendererCVars::CV_r_FlushToGPU >= 1)
+		GetDeviceObjectFactory().FlushToGPU();
 }
 
-void CD3D9Renderer::RT_FlashRenderPlaybackLocklessInternal(IFlashPlayer_RenderProxy* pPlayer, int cbIdx, bool bFinalPlayback, bool bDoRealRender)
+void CD3D9Renderer::RT_FlashRenderPlaybackLocklessInternal(std::shared_ptr<IFlashPlayer_RenderProxy> &&pPlayer, int cbIdx, bool bFinalPlayback, bool bDoRealRender)
 {
 	if (bDoRealRender)
 	{
@@ -123,13 +129,13 @@ void CD3D9Renderer::RT_FlashRenderPlaybackLocklessInternal(IFlashPlayer_RenderPr
 			{
 				{
 					auto eyeRenderScope = GetS3DRend().PrepareRenderingToEye(CCamera::eEye_Left);
-					pPlayer->RenderPlaybackLocklessCallback(cbIdx, IFlashPlayer_RenderProxy::EFT_StereoLeft, false, false);
+					pPlayer->RenderPlaybackLocklessCallback(cbIdx, IFlashPlayer_RenderProxy::EFT_StereoLeft, false);
 				}
 
 				if (GetS3DRend().RequiresSequentialSubmission())
 				{
 					auto eyeRenderScope = GetS3DRend().PrepareRenderingToEye(CCamera::eEye_Right);
-					pPlayer->RenderPlaybackLocklessCallback(cbIdx, IFlashPlayer_RenderProxy::EFT_StereoRight, bFinalPlayback && !renderToScreen, true);
+					pPlayer->RenderPlaybackLocklessCallback(cbIdx, IFlashPlayer_RenderProxy::EFT_StereoRight, bFinalPlayback && !renderToScreen);
 				}
 			}
 		}
@@ -144,8 +150,11 @@ void CD3D9Renderer::RT_FlashRenderPlaybackLocklessInternal(IFlashPlayer_RenderPr
 	}
 	else
 	{
-		pPlayer->DummyRenderCallback(IFlashPlayer_RenderProxy::EFT_Mono, true);
+		pPlayer->DummyRenderCallback(IFlashPlayer_RenderProxy::EFT_Mono);
 	}
+
+	if (CRendererCVars::CV_r_FlushToGPU >= 1)
+		GetDeviceObjectFactory().FlushToGPU();
 }
 
 void CD3D9Renderer::RT_Init()
@@ -155,6 +164,8 @@ void CD3D9Renderer::RT_Init()
 
 void CD3D9Renderer::RT_ReleaseRenderResources(uint32 nFlags)
 {
+	CRY_PROFILE_REGION(PROFILE_RENDERER, "CD3D9Renderer::RT_ReleaseRenderResources");
+
 	if (nFlags & FRR_FLUSH_TEXTURESTREAMING)
 	{
 		CTexture::RT_FlushStreaming(true);
@@ -236,6 +247,8 @@ void CD3D9Renderer::RT_ReleaseRenderResources(uint32 nFlags)
 
 void CD3D9Renderer::RT_CreateRenderResources()
 {
+	CRY_PROFILE_REGION(PROFILE_RENDERER, "CD3D9Renderer::RT_CreateRenderResources");
+
 	CRendererResources::LoadDefaultSystemTextures();
 	CRendererResources::CreateSystemTargets(0, 0);
 	EF_Init();
@@ -253,33 +266,6 @@ void CD3D9Renderer::RT_CreateRenderResources()
 
 void CD3D9Renderer::RT_PrecacheDefaultShaders()
 {
-	SShaderCombination cmb;
-
-	m_cEF.s_ShaderStereo->mfPrecache(cmb, true, nullptr);
-
-#if defined(FEATURE_SVO_GI)
-	m_cEF.s_ShaderSVOGI->mfPrecache(cmb, true, nullptr);
-#endif
-	m_cEF.s_ShaderCommon->mfPrecache(cmb, true, nullptr);
-	m_cEF.s_ShaderDebug->mfPrecache(cmb, true, nullptr);
-	m_cEF.s_ShaderDeferredCaustics->mfPrecache(cmb, true, nullptr);
-	m_cEF.s_ShaderDeferredRain->mfPrecache(cmb, true, nullptr);
-	m_cEF.s_ShaderDeferredSnow->mfPrecache(cmb, true, nullptr);
-	m_cEF.s_shDeferredShading->mfPrecache(cmb, true, nullptr);
-	m_cEF.s_shPostDepthOfField->mfPrecache(cmb, true, nullptr);
-	m_cEF.s_ShaderDXTCompress->mfPrecache(cmb, true, nullptr);
-	m_cEF.s_ShaderLensOptics->mfPrecache(cmb, true, nullptr);
-	m_cEF.s_ShaderSoftOcclusionQuery->mfPrecache(cmb, true, nullptr);
-	m_cEF.s_shPostMotionBlur->mfPrecache(cmb, true, nullptr);
-	m_cEF.s_ShaderOcclTest->mfPrecache(cmb, true, nullptr);
-	m_cEF.s_shPostEffectsGame->mfPrecache(cmb, true, nullptr);
-	m_cEF.s_shPostEffectsRenderModes->mfPrecache(cmb, true, nullptr);
-	m_cEF.s_shPostAA->mfPrecache(cmb, true, nullptr);
-	m_cEF.s_ShaderShadowBlur->mfPrecache(cmb, true, nullptr);
-	m_cEF.s_shPostSunShafts->mfPrecache(cmb, true, nullptr);
-	m_cEF.s_ShaderClouds->mfPrecache(cmb, true, nullptr);
-	m_cEF.s_ShaderGpuParticles->mfPrecache(cmb, true, nullptr);
-
 #if RENDERER_SUPPORT_SCALEFORM
 	SF_PrecacheShaders();
 #endif

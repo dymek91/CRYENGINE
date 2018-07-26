@@ -11,8 +11,15 @@ public:
 	void BeginMeasurement();
 	void EndMeasurement();
 
-	uint32 IssueTimestamp(void* pCommandList);
+	uint32 IssueTimestamp(CDeviceCommandList* pCommandList);
 	bool ResolveTimestamps();
+
+	uint64 GetTime(uint32 timestamp)
+	{
+		timestamp -= m_groupIndex * kMaxTimestamps;
+
+		return m_timeValues[timestamp];
+	}
 
 	float GetTimeMS(uint32 timestamp0, uint32 timestamp1)
 	{
@@ -30,6 +37,8 @@ protected:
 	DeviceFenceHandle                   m_fence;
 	UINT64                              m_frequency;
 	std::array<uint64, kMaxTimestamps>  m_timeValues;
+
+	bool                                m_measurable;
 
 protected:
 	static bool                         s_reservedGroups[4];
@@ -163,48 +172,29 @@ inline NCryDX12::CCommandScheduler* GetScheduler()
 	return GetDeviceObjectFactory().GetDX12Scheduler();
 }
 
-inline D3D12_SHADER_VISIBILITY GetShaderVisibility(::EShaderStage shaderStages)
+inline static D3D12_SHADER_VISIBILITY GetShaderVisibility(::EShaderStage shaderStages)
 {
-	static D3D12_SHADER_VISIBILITY shaderVisibility[eHWSC_Num + 1] =
-	{
-		D3D12_SHADER_VISIBILITY_VERTEX,     // eHWSC_Vertex
-		D3D12_SHADER_VISIBILITY_PIXEL,      // eHWSC_Pixel
-		D3D12_SHADER_VISIBILITY_GEOMETRY,   // eHWSC_Geometry
-		D3D12_SHADER_VISIBILITY_ALL,        // eHWSC_Compute
-		D3D12_SHADER_VISIBILITY_DOMAIN,     // eHWSC_Domain
-		D3D12_SHADER_VISIBILITY_HULL,       // eHWSC_Hull
-		D3D12_SHADER_VISIBILITY_ALL,        // eHWSC_Num
-	};
+	extern D3D12_SHADER_VISIBILITY shaderVisibility[eHWSC_Num + 1];
 
 	EHWShaderClass shaderClass = eHWSC_Num;
-
-	if ((int(shaderStages) & (int(shaderStages) - 1)) == 0) // only bound to a single shader stage?
+	if (IsPowerOfTwo(shaderStages)) // only bound to a single shader stage?
 	{
-		for (shaderClass = eHWSC_Vertex; shaderClass != eHWSC_Num; shaderClass = EHWShaderClass(shaderClass + 1))
-		{
-			if (shaderStages & SHADERSTAGE_FROM_SHADERCLASS(shaderClass))
-				break;
-		}
+		shaderClass = EHWShaderClass(countTrailingZeros32(shaderStages));
 	}
 
 	return shaderVisibility[shaderClass];
 };
 
-inline CD3DX12_DESCRIPTOR_RANGE GetDescriptorRange(SResourceBindPoint bindPoint, int descriptorIndex)
+inline static CD3DX12_DESCRIPTOR_RANGE GetDescriptorRange(SResourceBindPoint bindPoint, int descriptorIndex)
 {
+	extern D3D12_DESCRIPTOR_RANGE_TYPE mapDescriptorRange[size_t(SResourceBindPoint::ESlotType::Count)];
+
 	CD3DX12_DESCRIPTOR_RANGE result;
 	result.BaseShaderRegister = bindPoint.slotNumber;
 	result.NumDescriptors = 1;
 	result.OffsetInDescriptorsFromTableStart = descriptorIndex;
 	result.RegisterSpace = 0;
-
-	switch (bindPoint.slotType)
-	{
-	case SResourceBindPoint::ESlotType::ConstantBuffer:      result.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_CBV;     break;
-	case SResourceBindPoint::ESlotType::TextureAndBuffer:    result.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;     break;
-	case SResourceBindPoint::ESlotType::UnorderedAccessView: result.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;     break;
-	case SResourceBindPoint::ESlotType::Sampler:             result.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER; break;
-	};
+	result.RangeType = mapDescriptorRange[size_t(bindPoint.slotType)];
 
 	return result;
 }

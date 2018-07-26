@@ -23,6 +23,9 @@
 #include "DeviceManager/DeviceFormats.h" // SPixFormat
 #include <Common/RenderDisplayContext.h>
 
+#include <algorithm>
+#include <iterator>
+
 #undef min
 #undef max
 
@@ -261,6 +264,7 @@ bool CTexture::CreateDeviceTexture(const void* pData[])
 
 bool CTexture::RT_CreateDeviceTexture(const void* pData[])
 {
+	CRY_PROFILE_REGION(PROFILE_RENDERER, "CTexture::RT_CreateDeviceTexture");
 	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Texture, 0, "Creating Texture");
 	MEMSTAT_CONTEXT_FMT(EMemStatContextTypes::MSC_Texture, 0, "%s %ix%ix%i %08x", m_SrcName.c_str(), m_nWidth, m_nHeight, m_nMips, m_eFlags);
 	SCOPED_RENDERER_ALLOCATION_NAME_HINT(GetSourceName());
@@ -540,6 +544,7 @@ void CTexture::UpdateTextureRegion(byte* pSrcData, int nX, int nY, int nZ, int U
 
 void CTexture::RT_UpdateTextureRegion(byte* pSrcData, int nX, int nY, int nZ, int USize, int VSize, int ZSize, ETEX_Format eSrcFormat)
 {
+	CRY_PROFILE_REGION(PROFILE_RENDERER, "CTexture::RT_UpdateTextureRegion");
 	PROFILE_FRAME(UpdateTextureRegion);
 	PROFILE_LABEL_SCOPE("UpdateTextureRegion");
 
@@ -724,15 +729,65 @@ static void DrawSceneToCubeSide(CRenderOutputPtr pRenderOutput, const Vec3& Pos,
 #endif
 }
 
-bool CTexture::RenderEnvironmentCMHDR(int size, const Vec3& Pos, TArray<unsigned short>& vecData)
+struct SCvarOverrideHelper
 {
+	template<typename T>
+	SCvarOverrideHelper(const char* cvarName, T value)
+	{
+		m_desiredValue.emplace<T>(value);
+		m_pCVar = gEnv->pConsole->GetCVar(cvarName);
+	}
+
+	void ApplyValue()
+	{
+		if (m_pCVar)
+		{
+			switch (m_pCVar->GetType())
+			{
+			case CVAR_INT:
+				m_previousValue.emplace<int>(m_pCVar->GetIVal());
+				m_pCVar->Set(stl::get<int>(m_desiredValue));
+				break;
+			case CVAR_FLOAT:
+				m_previousValue.emplace<float>(m_pCVar->GetFVal());
+				m_pCVar->Set(stl::get<float>(m_desiredValue));
+				break;
+			}
+		}
+	}
+
+	void RestoreValue()
+	{
+		if (m_pCVar)
+		{
+			switch (m_pCVar->GetType())
+			{
+			case CVAR_INT:
+				m_pCVar->Set(stl::get<int>(m_previousValue));
+				break;
+			case CVAR_FLOAT:
+				m_pCVar->Set(stl::get<float>(m_previousValue));
+				break;
+			}
+		}
+	}
+
+private:
+	CryVariant<int, float> m_desiredValue;
+	CryVariant<int, float> m_previousValue;
+	ICVar*                 m_pCVar;
+};
+
+DynArray<std::uint16_t> CTexture::RenderEnvironmentCMHDR(std::size_t size, const Vec3& Pos)
+{
+	bool result = true;
+	DynArray<std::uint16_t> vecData;
+
 #if CRY_PLATFORM_DESKTOP
 
 	float timeStart = gEnv->pTimer->GetAsyncTime().GetSeconds();
 
 	iLog->Log("Start generating a cubemap (%d x %d) at position (%.1f, %.1f, %.1f)", size, size, Pos.x, Pos.y, Pos.z);
-
-	vecData.SetUse(0);
 
 	bool bFullScreen = gcpRendD3D->IsFullscreen();
 
@@ -742,46 +797,25 @@ bool CTexture::RenderEnvironmentCMHDR(int size, const Vec3& Pos, TArray<unsigned
 		iLog->Log("Failed generating a cubemap: out of video memory");
 
 		SAFE_RELEASE(ptexGenEnvironmentCM);
-		return false;
+		return DynArray<std::uint16_t>{};
 	}
 
-	// Disable/set cvars that can affect cube map generation. This is thread unsafe (we assume editor will not run in mt mode), no other way around at this time
-	//	- coverage buffer unreliable for multiple views
-	//	- custom view distance ratios
-	ICVar* pCheckOcclusionCV = gEnv->pConsole->GetCVar("e_CheckOcclusion");
-	const int32 nCheckOcclusion = pCheckOcclusionCV ? pCheckOcclusionCV->GetIVal() : 1;
-	if (pCheckOcclusionCV)
-		pCheckOcclusionCV->Set(0);
+	// Disable/set cvars that can affect cube map generation.
+	SCvarOverrideHelper cvarOverrides[]
+	{
+		{ "e_CheckOcclusion",           0      },
+		{ "e_CoverageBuffer",           0      },
+		{ "e_StatObjBufferRenderTasks", 0      },
+		{ "e_ViewDistRatio",            1000.f },
+		{ "e_ViewDistRatioVegetation",  100.f  },
+		{ "e_LodRatio",                 1000.f },
+		{ "e_LodTransitionTime",        0.f    },
+		{ "r_flares",                   0      },
+		{ "r_ssdoHalfRes",              0      },
+	};
 
-	ICVar* pCoverageBufferCV = gEnv->pConsole->GetCVar("e_CoverageBuffer");
-	const int32 nCoverageBuffer = pCoverageBufferCV ? pCoverageBufferCV->GetIVal() : 0;
-	if (pCoverageBufferCV)
-		pCoverageBufferCV->Set(0);
-
-	ICVar* pStatObjBufferRenderTasksCV = gEnv->pConsole->GetCVar("e_StatObjBufferRenderTasks");
-	const int32 nStatObjBufferRenderTasks = pStatObjBufferRenderTasksCV ? pStatObjBufferRenderTasksCV->GetIVal() : 0;
-	if (pStatObjBufferRenderTasksCV)
-		pStatObjBufferRenderTasksCV->Set(0);
-
-	ICVar* pViewDistRatioCV = gEnv->pConsole->GetCVar("e_ViewDistRatio");
-	const float fOldViewDistRatio = pViewDistRatioCV ? pViewDistRatioCV->GetFVal() : 1.f;
-	if (pViewDistRatioCV)
-		pViewDistRatioCV->Set(10000.f);
-
-	ICVar* pLodTransitionTime = gEnv->pConsole->GetCVar("e_LodTransitionTime");
-	const float fOldLodTransitionTime = pLodTransitionTime ? pLodTransitionTime->GetFVal() : .0f;
-	if (pLodTransitionTime)
-		pLodTransitionTime->Set(.0f);
-
-	ICVar* pViewDistRatioVegetationCV = gEnv->pConsole->GetCVar("e_ViewDistRatioVegetation");
-	const float fOldViewDistRatioVegetation = pViewDistRatioVegetationCV ? pViewDistRatioVegetationCV->GetFVal() : 100.f;
-	if (pViewDistRatioVegetationCV)
-		pViewDistRatioVegetationCV->Set(10000.f);
-
-	ICVar* pLodRatioCV = gEnv->pConsole->GetCVar("e_LodRatio");
-	const float fOldLodRatio = pLodRatioCV ? pLodRatioCV->GetFVal() : 1.f;
-	if (pLodRatioCV)
-		pLodRatioCV->Set(1000.f);
+	for (auto& cvarOverride : cvarOverrides)
+		cvarOverride.ApplyValue();
 
 	Vec3 oldSunDir, oldSunStr, oldSunRGB;
 	float oldSkyKm, oldSkyKr, oldSkyG;
@@ -791,14 +825,6 @@ bool CTexture::RenderEnvironmentCMHDR(int size, const Vec3& Pos, TArray<unsigned
 		gEnv->p3DEngine->SetSkyLightParameters(oldSunDir, oldSunStr, oldSkyKm, oldSkyKr, 1.0f, oldSunRGB, true); // Hide sun disc
 	}
 
-	const int32 nFlaresCV = CRenderer::CV_r_flares;
-	CRenderer::CV_r_flares = 0;
-
-	ICVar* pSSDOHalfResCV = gEnv->pConsole->GetCVar("r_ssdoHalfRes");
-	const int nOldSSDOHalfRes = pSSDOHalfResCV ? pSSDOHalfResCV->GetIVal() : 1;
-	if (pSSDOHalfResCV)
-		pSSDOHalfResCV->Set(0);
-
 	// TODO: allow cube-map super-sampling
 	CRenderOutputPtr pRenderOutput = std::make_shared<CRenderOutput>(ptexGenEnvironmentCM, FRT_CLEAR, Clr_Transparent, 1.0f);
 
@@ -807,22 +833,46 @@ bool CTexture::RenderEnvironmentCMHDR(int size, const Vec3& Pos, TArray<unsigned
 		gcpRendD3D->GetGraphicsPipeline().Resize(size, size);
 	}, ERenderCommandFlags::None);
 
+	vecData.reserve(size * size * 6 * 4);
 	for (int nSide = 0; nSide < 6; nSide++)
 	{
-		while (true)
+		int32 waitFrames = max(0, CRendererCVars::CV_r_CubemapGenerationTimeout);
+		while (waitFrames-->0)
 		{
-			bool bSvoReady = gEnv->p3DEngine->IsSvoReady(true);
+#if defined(FEATURE_SVO_GI)
+			const bool is_svo_ready_pre_draw = gEnv->p3DEngine->IsSvoReady(true);
+#endif
 
 			gEnv->nMainFrameID++;
-
 			DrawSceneToCubeSide(pRenderOutput, Pos, size, nSide);
 
-			bSvoReady &= gEnv->p3DEngine->IsSvoReady(true);
-
-			if (bSvoReady)
+			SStreamEngineOpenStats streamStats;
+			gEnv->pSystem->GetStreamEngine()->GetStreamingOpenStatistics(streamStats);
+			if (streamStats.nOpenRequestCountByType[eStreamTaskTypeGeometry] == 0
+				&& streamStats.nOpenRequestCountByType[eStreamTaskTypeTexture] == 0
+				&& streamStats.nOpenRequestCountByType[eStreamTaskTypeTerrain] == 0
+#if defined(FEATURE_SVO_GI)
+				&& gEnv->p3DEngine->IsSvoReady(true)
+				&& is_svo_ready_pre_draw
+#endif
+				)
 				break;
 
+			// Update streaming engine
 			CrySleep(10);
+			gEnv->pSystem->GetStreamEngine()->Update(eStreamTaskTypeTerrain | eStreamTaskTypeTexture | eStreamTaskTypeGeometry);
+
+			// Flush and garbage collect
+			gcpRendD3D->ExecuteRenderThreadCommand([&] {
+				GetDeviceObjectFactory().FlushToGPU(false, true);
+			}, ERenderCommandFlags::FlushAndWait);
+		}
+
+		if (waitFrames<0)
+		{
+			CryWarning(VALIDATOR_MODULE_RENDERER, VALIDATOR_WARNING, 
+			    "Cubemap generation timeout: some outstanding tasks didn't finish on time, generated cubemap might be incorrect.\n" \
+			    "Consider increasing r_CubemapGenerationTimeout");
 		}
 
 		gcpRendD3D->ExecuteRenderThreadCommand([&]
@@ -830,55 +880,37 @@ bool CTexture::RenderEnvironmentCMHDR(int size, const Vec3& Pos, TArray<unsigned
 			CDeviceTexture* pDstDevTex = ptexGenEnvironmentCM->GetDevTexture();
 			pDstDevTex->DownloadToStagingResource(0, [&](void* pData, uint32 rowPitch, uint32 slicePitch)
 			{
-				unsigned short* pTarg = (unsigned short*)pData;
-				const uint32 nLineStride = CTexture::TextureDataSize(size, 1, 1, 1, 1, eTF_R16G16B16A16F) / sizeof(unsigned short);
+				const auto* pTarg = reinterpret_cast<const std::uint16_t*>(pData);
+				const uint32 nLineStride = CTexture::TextureDataSize(size, 1, 1, 1, 1, eTF_R16G16B16A16F) / sizeof(*pTarg);
 
 				// Copy vertically flipped image
 				for (uint32 nLine = 0; nLine < size; ++nLine)
-					vecData.Copy(&pTarg[((size - 1) - nLine) * nLineStride], nLineStride);
+				{
+					const auto src = pTarg + ((size - 1) - nLine) * nLineStride;
+					std::copy(src, src + nLineStride, std::back_inserter(vecData));
+				}
 
 				return true;
 			});
-			GetDeviceObjectFactory().IssueFrameFences();
+
+			// After download clean up temporal memory pools
+			GetDeviceObjectFactory().FlushToGPU(false, true);
 		}, ERenderCommandFlags::FlushAndWait);
 	}
 
 	SAFE_RELEASE(ptexGenEnvironmentCM);
 
-	if (pCheckOcclusionCV)
-		pCheckOcclusionCV->Set(nCheckOcclusion);
-
-	if (pCoverageBufferCV)
-		pCoverageBufferCV->Set(nCoverageBuffer);
-
-	if (pStatObjBufferRenderTasksCV)
-		pStatObjBufferRenderTasksCV->Set(nStatObjBufferRenderTasks);
-
-	if (pViewDistRatioCV)
-		pViewDistRatioCV->Set(fOldViewDistRatio);
-
-	if (pLodTransitionTime)
-		pLodTransitionTime->Set(fOldLodTransitionTime);
-
-	if (pViewDistRatioVegetationCV)
-		pViewDistRatioVegetationCV->Set(fOldViewDistRatioVegetation);
-
-	if (pLodRatioCV)
-		pLodRatioCV->Set(fOldLodRatio);
+	for (auto& cvarOverride : cvarOverrides)
+		cvarOverride.RestoreValue();
 
 	if (CRenderer::CV_r_HideSunInCubemaps)
 		gEnv->p3DEngine->SetSkyLightParameters(oldSunDir, oldSunStr, oldSkyKm, oldSkyKr, oldSkyG, oldSunRGB, true);
-
-	CRenderer::CV_r_flares = nFlaresCV;
-
-	if (pSSDOHalfResCV)
-		pSSDOHalfResCV->Set(nOldSSDOHalfRes);
 
 	float timeUsed = gEnv->pTimer->GetAsyncTime().GetSeconds() - timeStart;
 	iLog->Log("Successfully finished generating a cubemap in %.1f sec", timeUsed);
 #endif
 
-	return true;
+	return vecData;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -1110,7 +1142,7 @@ void CFlashTextureSourceBase::Advance(const float delta, bool isPaused)
 	if (!m_pFlashPlayer)
 		return;
 
-	AutoReleasedFlashPlayerPtr pFlashPlayer(m_pFlashPlayer->GetTempPtr());
+	const auto& pFlashPlayer = m_pFlashPlayer->GetTempPtr();
 	if (!pFlashPlayer)
 		return;
 
@@ -1128,7 +1160,7 @@ bool CFlashTextureSourceBase::Update()
 	if (!m_pFlashPlayer)
 		return false;
 
-	AutoReleasedFlashPlayerPtr pFlashPlayer(m_pFlashPlayer->GetTempPtr());
+	const auto& pFlashPlayer = m_pFlashPlayer->GetTempPtr();
 	if (!pFlashPlayer)
 		return false;
 
@@ -1156,7 +1188,7 @@ bool CFlashTextureSourceBase::Update()
 	{
 		PROFILE_LABEL_SCOPE("FlashDynTexture");
 
-		CScaleformPlayback::RenderFlashPlayerToTexture(*pFlashPlayer, pDynTexture->m_pTexture);
+		CScaleformPlayback::RenderFlashPlayerToTexture(pFlashPlayer.get(), pDynTexture->m_pTexture);
 
 		pDynTexture->SetUpdateMask();
 	}
@@ -1183,7 +1215,8 @@ bool CFlashTextureSource::Update()
 
 void CFlashTextureSourceSharedRT::ProbeDepthStencilSurfaceCreation(int width, int height)
 {
-	gcpRendD3D->GetTempDepthSurface(gcpRendD3D->GetFrameID(), width, height);
+	CTexture* pTex = gcpRendD3D->CreateDepthTarget(width, height, Clr_Empty, eTF_Unknown);
+	SAFE_RELEASE(pTex);
 }
 
 bool CFlashTextureSourceSharedRT::Update()

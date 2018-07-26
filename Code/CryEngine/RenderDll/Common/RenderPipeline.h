@@ -33,9 +33,7 @@ struct IRenderMesh;
 #define MAX_REND_SHADERS                      4096
 #define MAX_REND_SHADER_RES                   16384
 
-// FIXME: probably better to sort by shaders (Currently sorted by resources)
-// TODO: DURANGO doesn't like _MS_ALIGN(32) when passed to std::sort
-struct SRendItem
+struct CRY_ALIGN(32) SRendItem
 {
 	uint32 SortVal;
 	uint32 nBatchFlags;
@@ -44,10 +42,13 @@ struct SRendItem
 		uint32 ObjSort;
 		float  fDist;
 	};
-	SRendItemSorter        rendItemSorter;
-	CRenderObject*         pObj;
-	CCompiledRenderObject* pCompiledObject;
-	CRenderElement*        pElem;
+	SRendItemSorter rendItemSorter;
+	union
+	{
+		CRenderObject*         pRenderObject;
+		CCompiledRenderObject* pCompiledObject;
+	};
+	CRenderElement* pElem;
 	//uint32 nStencRef  : 8;
 
 	static float EncodeDistanceSortingValue(CRenderObject* pObj)
@@ -152,11 +153,12 @@ enum EStencilStateOp
 //Stencil masks
 #define BIT_STENCIL_RESERVED          0x80
 #define BIT_STENCIL_INSIDE_CLIPVOLUME 0x40
+#define STENCIL_VALUE_OUTDOORS        0x0
+
 #define STENC_VALID_BITS_NUM          7
 #define STENC_MAX_REF                 ((1 << STENC_VALID_BITS_NUM) - 1)
 
 //Batch flags.
-// - When adding/removing batch flags, please, update sBatchList static list in D3DRendPipeline.cpp
 enum EBatchFlags
 {
 	FB_GENERAL         = 0x1,
@@ -171,13 +173,13 @@ enum EBatchFlags
 	FB_MULTILAYERS     = 0x200,
 	FB_COMPILED_OBJECT = 0x400,
 	FB_CUSTOM_RENDER   = 0x800,
-//	FB________________ = 0x1000,
+	FB_RESOLVE_FULL    = 0x1000,
 	FB_LAYER_EFFECT    = 0x2000,
 	FB_WATER_REFL      = 0x4000,
 	FB_WATER_CAUSTIC   = 0x8000,
 	FB_DEBUG           = 0x10000,
 	FB_TILED_FORWARD   = 0x20000,
-//	FB________________ = 0x40000,
+	FB_REFRACTION      = 0x40000,
 	FB_EYE_OVERLAY     = 0x80000,
 
 	FB_MASK            = 0xfffff //! FB flags cannot exceed 0xfffff

@@ -97,16 +97,13 @@ const float TANGENT30_2 = 0.57735026918962576450914878050196f * 2;   // 2*tan(30
 
 #define DEF_SHAD_DBT_DEFAULT_VAL              1
 
-#define TEXSTREAMING_DEFAULT_VAL              1
+#define TEXSTREAMING_DEFAULT_VAL              2
 
 #define GEOM_INSTANCING_DEFAULT_VAL           0
 #define COLOR_GRADING_DEFAULT_VAL             1
 #define SUNSHAFTS_DEFAULT_VAL                 2
 #define HDR_RANGE_ADAPT_DEFAULT_VAL           0
 #define HDR_RENDERING_DEFAULT_VAL             1
-#define SHADOWS_POOL_DEFAULT_VAL              1
-#define SHADOWS_CLIP_VOL_DEFAULT_VAL          1
-#define SHADOWS_BLUR_DEFAULT_VAL              3
 #define TEXPREALLOCATLAS_DEFAULT_VAL          0
 #define TEXMAXANISOTROPY_DEFAULT_VAL          8
 #if CRY_PLATFORM_DESKTOP
@@ -605,10 +602,13 @@ struct CRY_ALIGN(128) SRenderStatistics
 	int m_NumImpostersDraw;
 	int m_NumCloudImpostersDraw;
 	int m_NumTextures;
+
+#if defined(ENABLE_PROFILING_CODE)
 	uint32 m_NumShadowPoolFrustums;
 	uint32 m_NumShadowPoolAllocsThisFrame;
 	uint32 m_NumShadowMaskChannels;
 	uint32 m_NumTiledShadingSkippedLights;
+#endif
 
 	int m_NumPSInstructions;
 	int m_NumVSInstructions;
@@ -641,33 +641,45 @@ struct CRY_ALIGN(128) SRenderStatistics
 	float m_fEnvCMapUpdateTime;
 	float m_fEnvTextUpdateTime;
 
-#if REFRACTION_PARTIAL_RESOLVE_STATS
 	float m_fRefractionPartialResolveEstimatedCost;
 	int m_refractionPartialResolveCount;
 	int m_refractionPartialResolvePixelCount;
-#endif
 
 	int m_NumRendMaterialBatches;
 	int m_NumRendGeomBatches;
 	int m_NumRendInstances;
 
-	int m_nDIPs[EFSLIST_NUM];
-	int m_nInsts;
-	int m_nInstCalls;
-	int m_nPolygons[EFSLIST_NUM];
-	int m_nPolygonsByTypes[EFSLIST_NUM][EVCT_NUM][2];
+#if defined(ENABLE_PROFILING_CODE)
+	// Synchronously recorded stats
+	int m_nNumInsts;
+	int m_nNumInstCalls;
 
-	int m_nScenePassDIPs;
-	int m_nScenePassPolygons;
-
-	int m_nModifiedCompiledObjects;
-	int m_nTempCompiledObjects;
-	int m_nIncompleteCompiledObjects;
 	int m_nNumPSOSwitches;
 	int m_nNumLayoutSwitches;
 	int m_nNumResourceSetSwitches;
 	int m_nNumInlineSets;
 	int m_nNumTopologySets;
+	int m_nDIPs[EFSLIST_NUM];
+	int m_nPolygons[EFSLIST_NUM];
+	int m_nPolygonsByTypes[EFSLIST_NUM][EVCT_NUM][2];
+
+	// Asynchronously recorded stats
+	int m_nAsynchNumInsts;
+	int m_nAsynchNumInstCalls;
+
+	int m_nAsynchNumPSOSwitches;
+	int m_nAsynchNumLayoutSwitches;
+	int m_nAsynchNumResourceSetSwitches;
+	int m_nAsynchNumInlineSets;
+	int m_nAsynchNumTopologySets;
+	int m_nAsynchDIPs[EFSLIST_NUM];
+	int m_nAsynchPolygons[EFSLIST_NUM];
+	int m_nAsynchPolygonsByTypes[EFSLIST_NUM][EVCT_NUM][2];
+#endif
+
+	int m_nModifiedCompiledObjects;
+	int m_nTempCompiledObjects;
+	int m_nIncompleteCompiledObjects;
 
 	int m_nNumBoundVertexBuffers[2];   // Local=0,PCIe=1 - or in tech-speak, L1=0 and L0=1
 	int m_nNumBoundIndexBuffers[2];    // Local=0,PCIe=1 - or in tech-speak, L1=0 and L0=1
@@ -677,6 +689,19 @@ struct CRY_ALIGN(128) SRenderStatistics
 	int m_nNumBoundUniformTextures[2]; // Local=0,PCIe=1 - or in tech-speak, L1=0 and L0=1
 
 	static SRenderStatistics* s_pCurrentOutput;
+
+	void Begin(const SRenderStatistics* prevData);
+	void Finish();
+
+#if defined(ENABLE_PROFILING_CODE)
+	int  GetNumGeomInstances() const;
+	int  GetNumGeomInstanceDrawCalls() const;
+
+	int  GetNumberOfDrawCalls() const;
+	int  GetNumberOfDrawCalls(const uint32 EFSListMask) const;
+	int  GetNumberOfPolygons() const;
+	int  GetNumberOfPolygons(const uint32 EFSListMask) const;
+#endif
 };
 
 //////////////////////////////////////////////////////////////////////
@@ -735,19 +760,19 @@ public:
 	virtual void RT_PrecacheDefaultShaders() = 0;
 	virtual bool RT_ReadTexture(void* pDst, int destinationWidth, int destinationHeight, EReadTextureFormat dstFormat, CTexture* pSrc) = 0;
 	virtual bool RT_StoreTextureToFile(const char* szFilePath, CTexture* pSrc) = 0;
-	virtual void FlashRender(IFlashPlayer_RenderProxy* pPlayer) override;
-	virtual void FlashRenderPlayer(IFlashPlayer* pPlayer) override;
-	virtual void FlashRenderPlaybackLockless(IFlashPlayer_RenderProxy* pPlayer, int cbIdx, bool finalPlayback) override;
+	virtual void FlashRenderPlayer(std::shared_ptr<IFlashPlayer> &&pPlayer) override;
+	virtual void FlashRender(std::shared_ptr<IFlashPlayer_RenderProxy> &&pPlayer) override;
+	virtual void FlashRenderPlaybackLockless(std::shared_ptr<IFlashPlayer_RenderProxy> &&pPlayer, int cbIdx, bool finalPlayback) override;
 	virtual void FlashRemoveTexture(ITexture* pTexture) override;
 
 	virtual void RT_RenderDebug(bool bRenderStats = true) = 0;
 
-	virtual void RT_FlashRenderInternal(IFlashPlayer* pPlayer) = 0;
-	virtual void RT_FlashRenderInternal(IFlashPlayer_RenderProxy* pPlayer, bool doRealRender) = 0;
-	virtual void RT_FlashRenderPlaybackLocklessInternal(IFlashPlayer_RenderProxy* pPlayer, int cbIdx, bool finalPlayback, bool doRealRender) = 0;
+	virtual void RT_FlashRenderInternal(std::shared_ptr<IFlashPlayer> &&pPlayer) = 0;
+	virtual void RT_FlashRenderInternal(std::shared_ptr<IFlashPlayer_RenderProxy> &&pPlayer, bool doRealRender) = 0;
+	virtual void RT_FlashRenderPlaybackLocklessInternal(std::shared_ptr<IFlashPlayer_RenderProxy> &&pPlayer, int cbIdx, bool finalPlayback, bool doRealRender) = 0;
 	virtual bool FlushRTCommands(bool bWait, bool bImmediatelly, bool bForce) override;
 	virtual bool ForceFlushRTCommands();
-	virtual void WaitForParticleBuffer() = 0;
+	virtual void WaitForParticleBuffer(int frameId) = 0;
 
 	virtual void RequestFlushAllPendingTextureStreamingJobs(int nFrames) override { m_nFlushAllPendingTextureStreamingJobs = nFrames; }
 	virtual void SetTexturesStreamingGlobalMipFactor(float fFactor) override      { m_fTexturesStreamingGlobalMipFactor = fFactor; }
@@ -767,9 +792,6 @@ public:
 	virtual WIN_HWND    Init(int x, int y, int width, int height, unsigned int cbpp, int zbpp, int sbits, WIN_HWND Glhwnd = 0, bool bReInit = false, bool bShaderCacheGen = false) override = 0;
 
 	virtual WIN_HWND    GetCurrentContextHWND() { return GetHWND(); }
-
-	virtual int         CreateRenderTarget(int nWidth, int nHeight, const ColorF& cClear, ETEX_Format eTF = eTF_R8G8B8A8) override = 0;
-	virtual bool        DestroyRenderTarget(int nHandle) override = 0;
 
 	virtual int         GetFeatures() override { return m_Features; }
 
@@ -863,9 +885,7 @@ public:
 	void                 DeleteRenderViews();
 
 	void             GetPolyCount(int& nPolygons, int& nShadowPolys) override;
-
 	int              GetPolyCount() override;
-	int              RT_GetPolyCount();
 
 	virtual bool     WriteDDS(byte* dat, int wdt, int hgt, int Size, const char* name, ETEX_Format eF, int NumMips) override;
 	virtual bool     WriteTGA(byte* dat, int wdt, int hgt, const char* name, int src_bits_per_pixel, int dest_bits_per_pixel) override;
@@ -922,8 +942,8 @@ public:
 
 	virtual void                Set2DMode(bool enable, int ortox, int ortoy, float znear = -1e10f, float zfar = 1e10f) override = 0;
 
-	virtual void                LockParticleVideoMemory() override                            {}
-	virtual void                UnLockParticleVideoMemory() override                          {}
+	virtual void                LockParticleVideoMemory(int frameId) override           {}
+	virtual void                UnLockParticleVideoMemory(int frameId) override         {}
 
 	virtual void                ActivateLayer(const char* pLayerName, bool activate) override {}
 
@@ -980,7 +1000,7 @@ public:
 	virtual void                   EF_ReloadShaderFiles(int nCategory) override;
 	virtual void                   EF_ReloadTextures() override;
 	virtual int                    EF_LoadLightmap(const char* nameTex) override;
-	virtual bool                   EF_RenderEnvironmentCubeHDR(int size, const Vec3& Pos, TArray<unsigned short>& vecData) override;
+	virtual DynArray<uint16_t>     EF_RenderEnvironmentCubeHDR(std::size_t size, const Vec3& Pos) override;
 	virtual bool                   WriteTIFToDisk(const void* pData, int width, int height, int bytesPerChannel, int numChannels, bool bFloat, const char* szPreset, const char* szFileName) override;
 	virtual ITexture*              EF_GetTextureByID(int Id) override;
 	virtual ITexture*              EF_GetTextureByName(const char* name, uint32 flags = 0) override;
@@ -1197,11 +1217,6 @@ public:
 	void              UpdateRenderingModesInfo();
 	bool              IsCustomRenderModeEnabled(uint32 nRenderModeMask);
 
-	bool              IsShadowPassEnabled() const
-	{
-		return (CV_r_ShadowPass && CV_r_usezpass && !m_wireframe_mode);
-	}
-
 	bool              IsEditorMode() const
 	{
 #if CRY_PLATFORM_DESKTOP
@@ -1221,7 +1236,7 @@ public:
 	}
 
 	//	Get mipmap distance factor (depends on screen width, screen height and aspect ratio)
-	float                GetMipDistFactor(uint32 twidth, uint32 theight) { return (1.0f / std::min(CRendererResources::s_renderWidth, CRendererResources::s_renderHeight)) * std::max(twidth, theight); }
+	float                GetMipDistFactor(uint32 twidth, uint32 theight) { float ratio = std::max(twidth, theight) / float(CRendererResources::s_renderMinDim); return ratio * ratio; }
 //	float                GetMipDistFactor(uint32 twidth, uint32 theight) { return ((TANGENT30_2 * TANGENT30_2) / (m_rheight * m_rheight)) * std::max(twidth, theight) * std::max(twidth, theight); }
 
 	static int           GetTexturesStreamPoolSize();
@@ -1259,8 +1274,9 @@ public:
 
 	virtual void                   SetTexturePrecaching(bool stat) override;
 
-	virtual const RPProfilerStats* GetRPPStats(ERenderPipelineProfilerStats eStat, bool bCalledFromMainThread = true) override                       { return NULL; }
-	virtual const RPProfilerStats* GetRPPStatsArray(bool bCalledFromMainThread = true) override                                                      { return NULL; }
+	virtual const RPProfilerStats*                   GetRPPStats(ERenderPipelineProfilerStats eStat, bool bCalledFromMainThread = true) override  { return nullptr; }
+	virtual const RPProfilerStats*                   GetRPPStatsArray(bool bCalledFromMainThread = true) override                                 { return nullptr; }
+	virtual const DynArray<RPProfilerDetailedStats>* GetRPPDetailedStatsArray(bool bCalledFromMainThread = true ) override                        { return nullptr; }
 
 	virtual int                    GetPolygonCountByType(uint32 EFSList, EVertexCostTypes vct, uint32 z, bool bCalledFromMainThread = true) override { return 0; }
 
@@ -1283,7 +1299,7 @@ public:
 	void ClearDrawCallsInfo();
 #endif
 #ifdef ENABLE_PROFILING_CODE
-	void         AddRecordedProfilingStats(const struct SProfilingStats& stats, ERenderListID renderList, bool bScenePass);
+	void         AddRecordedProfilingStats(const struct SProfilingStats& stats, ERenderListID renderList, bool bAsynchronous);
 #endif
 
 	virtual void                CollectDrawCallsInfo(bool status) override;
@@ -1330,7 +1346,7 @@ public:
 	CStandardGraphicsPipeline&     GetGraphicsPipeline() { return *m_pGraphicsPipeline; }
 
 	template<typename RenderThreadCallback>
-	void ExecuteRenderThreadCommand(RenderThreadCallback&& callback, ERenderCommandFlags flags)
+	void ExecuteRenderThreadCommand(RenderThreadCallback&& callback, ERenderCommandFlags flags = ERenderCommandFlags::None)
 	{
 		m_pRT->ExecuteRenderThreadCommand(std::forward<RenderThreadCallback>(callback), flags);
 	}
@@ -1389,6 +1405,7 @@ public:
 
 	byte      m_bDeviceSupportsInstancing;
 
+	uint32    m_bDeviceSupports_AMDExt;
 	uint32    m_bDeviceSupports_NVDBT          : 1;
 	uint32    m_bDeviceSupportsTessellation    : 1;
 	uint32    m_bDeviceSupportsGeometryShaders : 1;
@@ -1613,7 +1630,7 @@ protected:
 	SMSAA    m_MSAAData;
 
 	// Render frame statistics
-	SRenderStatistics         m_frameRenderStats[RT_COMMAND_BUF_COUNT];
+	SRenderStatistics m_frameRenderStats[RT_COMMAND_BUF_COUNT];
 
 	// Render target statistics
 	std::vector<SRTargetStat> m_renderTargetStats;

@@ -46,6 +46,8 @@ CCharInstance::CCharInstance(const string& strFileName, CDefaultSkeleton* pDefau
 	m_LastUpdateFrameID_Pre = 0;
 	m_LastUpdateFrameID_Post = 0;
 
+	m_fZoomDistanceSq = std::numeric_limits<float>::max();
+
 	m_rpFlags = CS_FLAG_DRAW_MODEL;
 	memset(arrSkinningRendererData, 0, sizeof(arrSkinningRendererData));
 	m_processingContext = -1;
@@ -440,21 +442,24 @@ void CCharInstance::GetRandomPoints(Array<PosNorm> points, CRndGen& seed, EGeomF
 		if (part.iPart-- == 0)
 		{
 			// Base model.
-			IRenderMesh* pMesh = m_pDefaultSkeleton->GetIRenderMesh();
-
-			SSkinningData* pSkinningData = NULL;
-			int nFrameID = gEnv->pRenderer->EF_GetSkinningPoolID();
-			for (int n = 0; n < 3; n++)
+			if (IRenderMesh* pMesh = m_pDefaultSkeleton->GetIRenderMesh())
 			{
-				int nList = (nFrameID - n) % 3;
-				if (arrSkinningRendererData[nList].nFrameID == nFrameID - n)
+				SSkinningData* pSkinningData = NULL;
+				int nFrameID = gEnv->pRenderer->EF_GetSkinningPoolID();
+				for (int n = 0; n < 3; n++)
 				{
-					pSkinningData = arrSkinningRendererData[nList].pSkinningData;
-					break;
+					int nList = (nFrameID - n) % 3;
+					if (arrSkinningRendererData[nList].nFrameID == nFrameID - n)
+					{
+						pSkinningData = arrSkinningRendererData[nList].pSkinningData;
+						break;
+					}
 				}
-			}
 
-			pMesh->GetRandomPoints(part.aPoints, seed, eForm, pSkinningData);
+				pMesh->GetRandomPoints(part.aPoints, seed, eForm, pSkinningData);
+			}
+			else
+				part.aPoints.fill(ZERO);
 		}
 
 		else if (part.iPart-- == 0)

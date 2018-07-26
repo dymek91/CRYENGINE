@@ -226,12 +226,13 @@ public:
 		return m_pLookupDataMan;
 	}
 
-	SResFileLookupData* GetLookupData(bool bCreate, uint32 CRC, float fVersion) const;
+	SResFileLookupData* GetLookupData() const;
+	void                StoreLookupData(uint32 CRC, float fVersion);
 
 	const char* mfGetError(void);
 	void        mfSetError(const char* er, ...);
 	const char* mfGetFileName() const {return m_name.c_str(); }
-	int         mfGetVersion()        { return m_version; }
+	int         mfGetVersion()  const { return m_version; }
 	void        mfDeactivate(bool bReleaseDir);
 
 	void mfTickStreaming();
@@ -285,7 +286,8 @@ public:
 	SDirEntryOpen* mfOpenEntry(const CCryNameTSCRC &Name);
 	SDirEntryOpen* mfGetOpenEntry(const CCryNameTSCRC &Name);
 	CDirEntry*     mfGetEntry(const CCryNameTSCRC &name, bool* bAsync = NULL);
-	ResDir*        mfGetDirectory();
+	ResDir*        mfGetDirectory() { return &m_Dir; }
+	const ResDir*  mfGetDirectory() const { return &m_Dir; }
 
 	FILE* mfGetHandle() { return m_handle; }
 	int   mfGetResourceSize();
@@ -303,6 +305,41 @@ public:
 
 	static uint32 m_nMaxOpenResFiles;
 	static int m_nNumOpenResources;
+};
+
+class CResFileOpenScope
+{
+private:
+	CResFile * rf = nullptr;
+
+public:
+	CResFileOpenScope(CResFile* rf) : rf(rf) {}
+
+	CResFileOpenScope(const CResFileOpenScope&) = delete;
+	CResFileOpenScope& operator=(const CResFileOpenScope&) = delete;
+
+	CResFileOpenScope(CResFileOpenScope&& o) noexcept : rf(o.rf) { o.rf = nullptr; }
+	CResFileOpenScope& operator=(CResFileOpenScope&& o) noexcept { 
+		rf = o.rf;
+		o.rf = nullptr; 
+
+		return *this; 
+	}
+
+	template <typename... Ts>
+	bool open(Ts&&... args)
+	{
+		return rf->mfOpen(std::forward<Ts>(args)...) != 0;
+	}
+
+	~CResFileOpenScope()
+	{
+		if (rf)
+			rf->mfClose();
+	}
+
+	CResFile* getHandle() { return rf; }
+	const CResFile* getHandle() const { return rf; }
 };
 
 #endif //  __RESFILE_H__

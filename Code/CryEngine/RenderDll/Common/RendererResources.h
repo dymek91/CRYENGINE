@@ -3,8 +3,6 @@
 #pragma once
 
 #include <CryRenderer/ITexture.h>
-#include <Common/Textures/TempDepthTexture.h>
-#include <Common/ResourcePool.h>
 
 class CTexture;
 struct SEnvTexture;
@@ -46,8 +44,6 @@ enum
 	TO_RT_CM,
 	TO_CLOUDS_LM,
 	TO_BACKBUFFERMAP,
-	TO_PREVBACKBUFFERMAP0,
-	TO_PREVBACKBUFFERMAP1,
 	TO_MIPCOLORS_DIFFUSE,
 	TO_MIPCOLORS_BUMP,
 
@@ -93,45 +89,19 @@ enum
 #define NUM_HDR_BLOOM_TEXTURES   3
 #define MIN_DOF_COC_K            6
 
-#if CRY_RENDERER_OPENGLES
-#define MAX_OCCLUSION_READBACK_TEXTURES 2
-#else
-#define MAX_OCCLUSION_READBACK_TEXTURES 8
-#endif
+#define MAX_OCCLUSION_READBACK_TEXTURES (MAX_GPU_NUM * MAX_FRAMES_IN_FLIGHT)
 
 class CRendererResources
 {
-	using tempTexturePool_t = CResourcePool<STempDepthTexture>;
-
-public:
-	using CTempTexture = tempTexturePool_t::value_type;
 
 public:
 	void InitResources() {}
 
 public:
-	static tempTexturePool_t m_TempDepths;
+	static size_t m_RTallocs, m_DTallocs;
 
-	static CTempTexture   GetTempDepthSurface(int currentFrameID, int nWidth, int nHeight, bool bExactMatch = true);
-	static size_t         SizeofTempDepthSurfaces();
-	static void           ReleaseTempDepthSurfaces();
-
-	// Erases temporaries that have been unused for a specified frames count
-	static void TrimTempDepthSurfaces(int currentFrameID, int delayFrames)
-	{
-		for (auto it = m_TempDepths.begin(); it != m_TempDepths.end();)
-		{
-			const auto &tex = *it;
-
-			const auto unused = tex->UseCount() == 1 && !tex->texture.IsLocked();
-			const auto shouldDelete = unused && currentFrameID - tex->lastAccessFrameID >= delayFrames;
-			it = shouldDelete ?
-				m_TempDepths.erase(it) :
-				std::next(it);
-		}
-	}
-
-	static SDepthTexture CreateDepthSurface(int nWidth, int nHeight, bool bAA);
+	static CTexture* CreateDepthTarget(int nWidth, int nHeight, const ColorF& cClear, ETEX_Format eTF);
+	static CTexture* CreateRenderTarget(int nWidth, int nHeight, const ColorF& cClear, ETEX_Format eTF);
 
 public:
 	static bool m_bLoadedSystem;
@@ -168,7 +138,7 @@ public:
 	static void OnDisplayResolutionChanged(int displayWidth, int displayHeight);
 	
 	static int s_resourceWidth, s_resourceHeight;
-	static int s_renderWidth, s_renderHeight;
+	static int s_renderWidth, s_renderHeight, s_renderMinDim, s_renderArea;
 	static int s_outputWidth, s_outputHeight;
 	static int s_displayWidth, s_displayHeight;
 	static ETEX_Format s_eTFZ;
@@ -193,9 +163,6 @@ public:
 	static CTexture* s_ptexFromObj;                           // ?
 	static CTexture* s_ptexHDRMeasuredLuminanceDummy;         // ?
 	static CTexture* s_ptexCloudsLM;                          // ?
-	static CTexture* s_ptexSkyDomeMie;                        // ?
-	static CTexture* s_ptexSkyDomeRayleigh;                   // ?
-	static CTexture* s_ptexSkyDomeMoon;                       // ?
 	static CTexture* s_ptexColorChart;                        // ?
 
 	static CTexture* s_pTexNULL;
@@ -308,7 +275,6 @@ public:
 	static CTexture* s_ptexBackBuffer;                                           // back buffer copy
 	static CTexture* s_ptexBackBufferScaled[3];                                  // backbuffer low-resolution/blurred version. 2x/4x/8x/16x smaller than screen
 	static CTexture* s_ptexBackBufferScaledTemp[2];                              // backbuffer low-resolution/blurred version. 2x/4x/8x/16x smaller than screen, temp textures (used for blurring/ping-pong)
-	static CTexture* s_ptexPrevBackBuffer[2][2];                                 // previous frame back buffer copies (for left and right eye)
 
 	static CTexture* s_ptexAOColorBleed;                                         // CScreenSpaceObscuranceStage, CTiledShadingStage
 	static CTexture* s_ptexShadowMask;                                           // CShadowMapStage

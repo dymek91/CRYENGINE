@@ -354,6 +354,15 @@ void C3DEngine::UnloadLevel()
 		GetRenderer()->FlushRTCommands(true, true, true);
 	}
 
+	//////////////////////////////////////////////////////////////////////////
+	// delete all rendernodes marked for deletion
+	{
+		CryComment("Deleting render nodes");
+		for (int i = 0; i < CRY_ARRAY_COUNT(m_renderNodesToDelete); ++i)
+			TickDelayedRenderNodeDeletion();
+		CryComment("done");
+	}
+
 	// release CGF and materials table
 	for (uint32 i = 0; m_pLevelStatObjTable && i < m_pLevelStatObjTable->size(); i++)
 	{
@@ -419,7 +428,12 @@ void C3DEngine::UnloadLevel()
 		CryComment("done");
 	}
 
-	CRY_ASSERT(m_pClipVolumeManager->GetClipVolumeCount() == 0);
+	// free all clip volumes marked for delete
+	{
+		m_pClipVolumeManager->TrimDeletedClipVolumes();
+		CRY_ASSERT(m_pClipVolumeManager->GetClipVolumeCount() == 0);
+	}
+
 	CRY_ASSERT(!COctreeNode::m_nNodesCounterAll);
 
 	if (m_pWaterWaveManager)
@@ -498,15 +512,6 @@ void C3DEngine::UnloadLevel()
 			tex->Release();
 
 		m_nNightMoonTexId = 0;
-	}
-
-	//////////////////////////////////////////////////////////////////////////
-	// delete all rendernodes marked for deletion
-	{
-		CryComment("Deleting render nodes");
-		for (int i=0; i<CRY_ARRAY_COUNT(m_renderNodesToDelete); ++i)
-			TickDelayedRenderNodeDeletion();
-		CryComment("done");
 	}
 
 	//////////////////////////////////////////////////////////////////////////
@@ -1301,6 +1306,10 @@ void C3DEngine::LoadEnvironmentSettingsFromXML(XmlNodeRef pInputNode)
 		if (auto cvar = m_pConsole->GetCVar("r_ShadowsCache"))
 		{
 			m_nGsmCache = cvar->GetIVal();
+		}
+		else
+		{
+			m_nGsmCache = 0;
 		}
 	}
 

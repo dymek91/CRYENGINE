@@ -46,7 +46,6 @@ struct CustomForwardShadingAttribs
 };
 
 #include "ShadeLib.cfi"
-#include "ForwardShading.cfi"
 
 //////////////////////////////// Common vertex shader ////////////////
 
@@ -77,8 +76,6 @@ Texture2D DirectionTex : register(t4)
   UIName = "Direction Map";
   UIDescription = "Tangent space map for defining hair direction";
 > = TM_Detail;
-
-half4 AmbientOpPB  : PB_AmbientOpacity;
 
 // Tweakables /////////////////
 
@@ -273,7 +270,7 @@ void Callback_ShadingDirect(in ForwardShadingAttribs attribs, in ForwardLightPar
   specularAcc.xyz = cSpecular.xyz * light.illuminance;
 }
 
-#include "TiledShading.cfi"
+#include "ForwardShading.cfi"
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -389,13 +386,6 @@ float4 HairShading(vert2FragHair IN, bool bOpaquePass)
 	
 	TiledForwardShading(attribs, diffuseAcc, specularAcc, ssFwdBilinearWrap, ssFwdComparison, highQualityShadowFiltering, true, applyLights, true);
 #endif
-
-#if !%_RT_TILED_SHADING
-	#if FEATURE_SVO_GI
-		ApplyGI(specularAcc, diffuseAcc, diffuseAcc, attribs.screenUV + .5f / CV_ScreenSize.xy, attribs.smoothness, attribs.reflectance, 
-			Fwd_GiDiffuseRT, Fwd_GiSpecularRT, TrilinearClampSamplerState, (int)(ForwGiIntegrationMode.y));
-	#endif
-#endif
 	
 	// Final composition
 	half4 cFinal = half4(diffuseAcc * attribs.albedo.rgb + specularAcc, fAlpha);
@@ -431,7 +421,7 @@ pixoutHair2 ThinHairDepthPS(vert2FragHair IN)
 {
 	pixoutHair2 OUT = (pixoutHair2)0;
 	
-	float fOpacity = saturate(GetAlphaTex(diffuseTex, IN.Common.baseTC) * AlphaBlendMultiplier) * AmbientOpPB.a;
+	float fOpacity = saturate(GetAlphaTex(diffuseTex, IN.Common.baseTC) * AlphaBlendMultiplier) a;
 	clip(fOpacity - ThinHairThreshold);
 	
 	return OUT;
@@ -771,7 +761,7 @@ pixout Hair_MotionBlurPassPS(vert2fragMotionBlur IN)
 {
 	pixout OUT = (pixout)1;
 
-	float fOpacity = saturate(GetAlphaTex(diffuseTex, IN.baseTC) * AlphaBlendMultiplier) * AmbientOpPB.a;
+	float fOpacity = saturate(GetAlphaTex(diffuseTex, IN.baseTC) * AlphaBlendMultiplier);
 
 	#if !%THIN_HAIR
 		clip(fOpacity - Get_MaterialAlphaTest());
@@ -815,8 +805,12 @@ vert2fragCustomRender Hair_CustomRenderPassVS(app2vertCustomViews IN)
 
 	streamPos vertPassPos = (streamPos)0;
 	streamPos_FromCustomViews(IN, vertPassPos);
-
-	OUT.cVision = PerInstanceCustomData1;
+	
+#if !%_RT_ENVIRONMENT_CUBEMAP
+	OUT.cVision = CD_CustomData1;
+#else
+	OUT.cVision = 0.0f;
+#endif
 
 	OUT.HPosition = Pos_VS_General(g_VS_ViewProjZeroMatr, vertPassPos);
 	OUT.vView.xyz = vertPassPos.WorldPos.xyz;
