@@ -31,6 +31,10 @@ public:
 
 	EShaderQuality             m_ShaderQuality;
 	uint32                     m_RenderState;
+	uint32                     m_RenderStateIndependent[8] = { 0 }; //render targets with independent blend states
+	uint32                     m_RenderStateIndependentAlpha[8] = { 0 };
+	//uint32                     m_RenderStateSlot1; //render state for render target 1 - diffuse
+	//uint32                     m_RenderStateSlot2; //render state for render target 2 - specular
 	uint32                     m_StencilState;
 	uint8                      m_StencilReadMask;
 	uint8                      m_StencilWriteMask;
@@ -40,6 +44,10 @@ public:
 	ERenderPrimitiveType       m_PrimitiveType;
 	CDeviceRenderPassPtr       m_pRenderPass;
 	bool                       m_bAllowTesselation;
+	bool                       m_bCustomTargetBlends = false; //independent target blends for render targets
+	//bool                       m_bCustomDecalType1 = false; //decal with independent custom target blends
+	//bool                       m_bCustomDecalType2 =false;
+	//bool                       m_bCustomDecalType3 = false;
 	bool                       m_bDepthClip;
 	bool                       m_bDepthBoundsTest;
 	bool                       m_bDynamicDepthBias; // When clear, SetDepthBias() may be ignored by the PSO. This may be faster on PS4 and VK. It has no effect on DX11 (always on) and DX12 (always off).

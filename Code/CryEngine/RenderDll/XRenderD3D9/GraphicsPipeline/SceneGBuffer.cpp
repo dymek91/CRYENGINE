@@ -253,7 +253,6 @@ bool CSceneGBufferStage::CreatePipelineState(const SGraphicsPipelineStateDescrip
 			} 
 		}
 	}
-
 	psoDesc.m_pRenderPass = pSceneRenderPass->GetRenderPass();
 
 	if (!psoDesc.m_pRenderPass)
