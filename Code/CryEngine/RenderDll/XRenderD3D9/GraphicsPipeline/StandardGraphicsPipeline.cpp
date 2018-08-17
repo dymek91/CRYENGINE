@@ -679,7 +679,6 @@ void CStandardGraphicsPipeline::ExecuteMinimumForwardShading()
 
 	if (pRenderView->GetCurrentEye() != CCamera::eEye_Right)
 	{
-		m_pComputeParticlesStage->Execute();
 		m_pComputeParticlesStage->PreDraw();
 		m_pComputeSkinningStage->Execute();
 	}
@@ -786,7 +785,6 @@ void CStandardGraphicsPipeline::Execute()
 	if (pRenderView->GetCurrentEye() != CCamera::eEye_Right)
 	{
 		// Compute algorithms
-		m_pComputeParticlesStage->Execute();
 		m_pComputeSkinningStage->Execute();
 
 		// Revert resource states to graphics pipeline
