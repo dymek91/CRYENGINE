@@ -110,7 +110,8 @@ public:
 protected:
 	virtual bool         GetParamInfoFromType(const CAnimParamType& paramId, SParamInfo& info) const override;
 	int                  GetEntityId() const { return m_EntityId; }
-	void                 ReleaseSounds();
+
+	void                 StopAudio();
 	void                 ApplyEventKey(class CEventTrack* track, int keyIndex, SEventKey& key);
 	void                 ApplyAudioTriggerKey(CryAudio::ControlId audioTriggerId, bool const bPlay = true);
 	Vec3                 Adjust3DSoundOffset(bool bVoice, IEntity* pEntity, Vec3& oSoundPos) const;
@@ -197,12 +198,12 @@ private:
 
 	struct SAnimState
 	{
-		int32 m_lastAnimationKeys[10][2]; //FIEND: Default 3:2
-		bool  m_layerPlaysAnimation[10]; //FIEND: Default is 3, upping Array
+		int32 m_lastAnimationKeys[3][2];
+		bool  m_layerPlaysAnimation[3];
 
 		//! This is used to indicate that a time-jumped blending is currently happening in the animation track.
-		bool  m_bTimeJumped[10]; //FIEND: 3
-		float m_jumpTime[10]; //FIEND: 3
+		bool  m_bTimeJumped[3];
+		float m_jumpTime[3];
 	};
 
 	SAnimState              m_baseAnimState;
@@ -212,10 +213,11 @@ private:
 	bool                    m_visible;
 	bool                    m_bInitialPhysicsStatus;
 
-	std::vector<int>        m_audioSwitchTracks;
-	std::vector<float>      m_audioParameterTracks;
-	std::vector<SAudioInfo> m_audioTriggerTracks;
-	std::vector<SAudioInfo> m_audioFileTracks;
+	std::vector<int>              m_audioSwitchTracks;
+	std::vector<float>            m_audioParameterTracks;
+	std::vector<SAudioInfo>       m_audioTriggerTracks;
+	std::vector<SAudioInfo>       m_audioFileTracks;
+	std::vector<SAudioTriggerKey> m_activeAudioTriggers;
 
 	int                     m_lastDrsSignalKey;
 	int                     m_iCurMannequinKey;

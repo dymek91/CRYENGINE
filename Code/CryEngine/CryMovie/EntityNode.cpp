@@ -840,7 +840,7 @@ void CAnimEntityNode::CreateDefaultTracks()
 
 CAnimEntityNode::~CAnimEntityNode()
 {
-	ReleaseSounds();
+	StopAudio();
 }
 
 unsigned int CAnimEntityNode::GetParamCount() const
@@ -1259,6 +1259,7 @@ void CAnimEntityNode::Animate(SAnimContext& animContext)
 						if (audioTriggerInfo.audioKeyStart < audioTriggerKeyNum)
 						{
 							ApplyAudioTriggerKey(audioTriggerKey.m_startTriggerId);
+							m_activeAudioTriggers.emplace_back(audioTriggerKey);
 						}
 
 						if (audioTriggerInfo.audioKeyStart > audioTriggerKeyNum)
@@ -1283,6 +1284,8 @@ void CAnimEntityNode::Animate(SAnimContext& animContext)
 								{
 									ApplyAudioTriggerKey(audioTriggerKey.m_startTriggerId, false);
 								}
+
+								m_activeAudioTriggers.erase(std::remove(m_activeAudioTriggers.begin(), m_activeAudioTriggers.end(), audioTriggerKey), m_activeAudioTriggers.end());
 							}
 						}
 						else
@@ -1706,30 +1709,21 @@ void CAnimEntityNode::Animate(SAnimContext& animContext)
 	}
 }
 
-void CAnimEntityNode::ReleaseSounds()
+void CAnimEntityNode::StopAudio()
 {
-	REINST(Stop all playing sounds)
-	//// stop all sounds
-	//if (!m_soundInfo.empty())
-	//{
-	//	std::vector<SSoundInfo>::iterator Iter(m_soundInfo.begin());
-	//	std::vector<SSoundInfo>::const_iterator const IterEnd(m_soundInfo.end());
+	for (auto const& audioTriggerKey : m_activeAudioTriggers)
+	{
+		if (audioTriggerKey.m_stopTriggerId != CryAudio::InvalidControlId)
+		{
+			ApplyAudioTriggerKey(audioTriggerKey.m_stopTriggerId);
+		}
+		else
+		{
+			ApplyAudioTriggerKey(audioTriggerKey.m_startTriggerId, false);
+		}
+	}
 
-	//	for (; Iter != IterEnd; ++Iter)
-	//	{
-	//		SSoundInfo& rSoundInfo = *Iter;
-
-	//		if (rSoundInfo.nSoundID != INVALID_SOUNDID)
-	//		{
-	//			if (_smart_ptr<ISound> const pSound = gEnv->pAudioSystem->GetSound(rSoundInfo.nSoundID))
-	//			{
-	//				pSound->Stop();
-	//			}
-	//		}
-
-	//		rSoundInfo.Reset();
-	//	}
-	//}
+	m_activeAudioTriggers.clear();
 }
 
 void CAnimEntityNode::OnReset()
@@ -1771,7 +1765,7 @@ void CAnimEntityNode::OnReset()
 	m_lookAtEntityId = 0;
 	m_allowAdditionalTransforms = true;
 	m_lookPose = "";
-	ReleaseSounds();
+	StopAudio();
 	ReleaseAllAnims();
 	UpdateDynamicParams();
 
@@ -1970,6 +1964,8 @@ void CAnimEntityNode::Activate(bool bActivate)
 
 void CAnimEntityNode::OnStart()
 {
+	CRY_ASSERT_MESSAGE(m_activeAudioTriggers.empty(), "m_activeAudioTriggers is not empty during CAnimEntityNode::OnStart");
+
 	m_bIsAnimDriven = false;
 
 	IAnimTrack* pPhysicalizeTrack = GetTrackForParameter(eAnimParamType_Physicalize);
@@ -1989,13 +1985,13 @@ void CAnimEntityNode::OnStart()
 
 void CAnimEntityNode::OnPause()
 {
-	ReleaseSounds();
+	StopAudio();
 	StopEntity();
 }
 
 void CAnimEntityNode::OnStop()
 {
-	ReleaseSounds();
+	StopAudio();
 	StopEntity();
 }
 

@@ -981,7 +981,7 @@ void CD3D9Renderer::RT_BeginFrame(const SDisplayContextKey& displayContextKey)
 
 	CResFile::Tick();
 	m_DevBufMan.Update(gRenDev->GetRenderFrameID(), false);
-	GetDeviceObjectFactory().OnBeginFrame();
+	GetDeviceObjectFactory().OnBeginFrame(gRenDev->GetRenderFrameID());
 
 	// Render updated dynamic flash textures
 	CFlashTextureSourceSharedRT::TickRT();
@@ -1283,14 +1283,14 @@ void CD3D9Renderer::ResolveSubsampledOutput()
 
 	PROFILE_LABEL_SCOPE("RESOLVE_SUBSAMPLED");
 
-	const CRenderOutput* pOutput = GetGraphicsPipeline().GetCurrentRenderOutput();
+	auto* pColorTarget = GetGraphicsPipeline().GetCurrentRenderView()->GetColorTarget();
 	CRenderDisplayContext* pDC = GetActiveDisplayContext(); pDC->PostPresent();
 
-	CRY_ASSERT(pOutput->GetColorTarget() != pDC->GetStorableColorOutput());
-	CRY_ASSERT(pOutput->GetColorTarget() != pDC->GetCurrentBackBuffer());
+	CRY_ASSERT(pColorTarget != pDC->GetStorableColorOutput());
+	CRY_ASSERT(pColorTarget != pDC->GetCurrentBackBuffer());
 
 	// TODO: add HDR meta-data coding to upscaling
-	GetGraphicsPipeline().m_UpscalePass->Execute(pOutput->GetColorTarget(), pDC->GetCurrentBackBuffer());
+	GetGraphicsPipeline().m_UpscalePass->Execute(pColorTarget, pDC->GetCurrentBackBuffer());
 }
 
 void CD3D9Renderer::ResolveHighDynamicRangeDisplay()
@@ -3286,7 +3286,7 @@ void CD3D9Renderer::RT_EndFrame()
 #endif
 
 	gRenDev->m_DevMan.RT_Tick();
-	GetDeviceObjectFactory().OnEndFrame();
+	GetDeviceObjectFactory().OnEndFrame(gRenDev->GetRenderFrameID());
 
 	gRenDev->m_fRTTimeEndFrame = iTimer->GetAsyncTime().GetDifferenceInSeconds(TimeEndF);
 
