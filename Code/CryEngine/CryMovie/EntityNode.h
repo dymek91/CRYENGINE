@@ -10,8 +10,8 @@
 
 #define ENTITY_SOUNDTRACKS     3
 #define ENTITY_EXPRTRACKS      3
-#define MAX_CHARACTER_TRACKS   3
-#define ADDITIVE_LAYERS_OFFSET 6
+#define MAX_CHARACTER_TRACKS   10 //FIEND: Default was 3
+#define ADDITIVE_LAYERS_OFFSET 1 //FIEND: Default was 6
 #define DEFAULT_LOOKIK_LAYER   15
 
 // When preloading of a trackview sequence is triggered, the animations in
