@@ -158,7 +158,7 @@ void CParticleEmitter::Update()
 	if (m_attributeInstance.WasChanged())
 		SetChanged();
 
-	if (IsStable())
+	if (ThreadMode() >= 3 && IsStable())
 		// Update only for last frame, even if update skipped for longer
 		m_timeUpdated = m_time;
 
@@ -187,8 +187,9 @@ void CParticleEmitter::Update()
 			Register();
 	}
 
-	CParticleManager::Instance()->GetPhysEnviron().Update(m_physEnviron, 
-		m_bounds, m_visEnviron.OriginIndoors(), m_pEffect->GetEnvironFlags() | ENV_WATER, true, 0);
+	if (HasBounds())
+		CParticleManager::Instance()->GetPhysEnviron().Update(m_physEnviron, 
+			m_bounds, m_visEnviron.OriginIndoors(), m_pEffect->GetEnvironFlags() | ENV_WATER, true, 0);
 
 	// Apply stats from last update
 	auto& stats = GetPSystem()->GetThreadData().statsCPU;
